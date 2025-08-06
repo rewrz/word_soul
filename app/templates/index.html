@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>言灵 Kotodama</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>言灵</h1>
+            <p class="subtitle">Kotodama / Word Soul</p>
+        </header>
+
+        <main>
+            <!-- 认证视图 -->
+            <div id="auth-view" class="view">
+                <div class="form-container">
+                    <form id="login-form">
+                        <h2>登录纪传</h2>
+                        <input type="text" id="login-username" placeholder="名讳 (Username)" required>
+                        <input type="password" id="login-password" placeholder="密语 (Password)" required>
+                        <button type="submit">进入</button>
+                        <p class="auth-toggle-link">没有账号？ <a href="#" id="show-register-link">注册新账号</a></p>
+                    </form>
+                    
+                    <form id="register-form" style="display: none;">
+                        <h2>初入此界</h2>
+                        <input type="text" id="register-username" placeholder="名讳 (Username)" required>
+                        <input type="password" id="register-password" placeholder="密语 (Password)" required>
+                        <button type="submit">注册</button>
+                        <p class="auth-toggle-link">已有账号？ <a href="#" id="show-login-link">直接登录</a></p>
+                    </form>
+
+                    <p id="auth-error" class="error-message"></p>
+                </div>
+            </div>
+
+            <!-- 主菜单视图 -->
+            <div id="main-menu-view" class="view" style="display: none;">
+                <h2>言灵纪事</h2>
+                <div id="session-list">
+                    <!-- 游戏存档将动态加载于此 -->
+                </div>
+                <button id="show-create-world-btn">咏唱创世之言</button>
+                <button id="manage-ai-configs-btn">管理AI模型</button>
+                <button id="logout-btn">退出此界</button>
+            </div>
+
+            <!-- 创世视图 -->
+            <div id="create-world-view" class="view" style="display: none;">
+                <h2>创世咏唱</h2>
+                <form id="create-world-form">
+                    <input type="text" id="world-name" placeholder="此界之名" required>
+                    <textarea id="character-description" placeholder="吾身之形" rows="3" required></textarea>
+                    <textarea id="world-rules" placeholder="万物之律" rows="5" required></textarea>
+                    <textarea id="initial-scene" placeholder="初始之景" rows="3" required></textarea>
+                    <textarea id="narrative-principles" placeholder="叙事原则" rows="3" required></textarea>
+                    <div class="form-group">
+                        <label for="creation-ai-config-select">咏唱所用AI模型:</label>
+                        <select id="creation-ai-config-select" required></select>
+                    </div>
+                    <button type="submit">创造世界</button>
+                    <button type="button" id="assist-create-world-btn">AI辅助咏唱</button>
+                    <button type="button" id="cancel-create-world-btn" class="secondary">返回</button>
+                </form>
+            </div>
+
+            <!-- 游戏视图 -->
+            <div id="game-view" class="view" style="display: none;">
+                <div class="game-header">
+                    <h2 id="game-world-name"></h2>
+                    <button id="change-game-ai-btn" class="secondary small-btn">更换AI模型</button>
+                    <button id="back-to-menu-btn" class="secondary small-btn">返回纪事</button>
+                </div>
+                <div class="game-container">
+                    <!-- 新增：游戏状态侧边栏 -->
+                    <div id="game-sidebar">
+                        <h3>吾身之况</h3>
+                        <div id="player-stats">
+                            <h4>任务</h4>
+                            <ul id="quest-list">
+                                <!-- 任务将动态加载于此 -->
+                            </ul>
+                            <h4>物品</h4>
+                            <ul id="inventory-list">
+                                <!-- 物品将动态加载于此 -->
+                            </ul>
+                        </div>
+                    </div>
+                    <!-- 游戏主面板 -->
+                    <div class="game-main-panel">
+                        <div id="game-log">
+                            <!-- 游戏日志将显示于此 -->
+                        </div>
+                        <div id="game-suggestions">
+                            <!-- 建议选项将显示于此 -->
+                        </div>
+                        <form id="action-form">
+                            <input type="text" id="action-input" placeholder="言出法随..." autocomplete="off" required>
+                            <button type="submit">执行</button>
+                        </form>
+                        <button id="retry-ai-btn" class="secondary small-btn">重试</button>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- 新增：AI配置管理视图 -->
+            <div id="ai-config-view" class="view" style="display: none;">
+                <h2>我的AI模型配置</h2>
+                <table id="ai-config-table">
+                    <thead>
+                        <tr>
+                            <th>配置名称</th>
+                            <th>API类型</th>
+                            <th>模型名称</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ai-config-list">
+                        <!-- AI配置将动态加载于此 -->
+                    </tbody>
+                </table>
+                <button id="show-add-config-modal-btn">添加新配置</button>
+                <button id="back-to-menu-from-config-btn" class="secondary">返回主菜单</button>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- 新增：AI配置模态框 (用于添加/编辑) -->
+    <div id="ai-config-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close-btn">&times;</span>
+            <h3 id="modal-title">添加新配置</h3>
+            <form id="ai-config-form">
+                <input type="hidden" id="config-id">
+                <input type="text" id="config-name" placeholder="配置名称 (例如 '我的Ollama')" required>
+                <select id="api-type" required>
+                    <option value="" disabled selected>选择API类型</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="local_openai">本地OpenAI兼容 (Ollama, LM Studio)</option>
+                    <option value="gemini">Google Gemini</option>
+                    <option value="claude">Anthropic Claude</option>
+                </select>
+                <input type="text" id="model-name" placeholder="模型名称 (例如 'llama3')">
+                <input type="password" id="api-key" placeholder="API Key (敏感信息，保存后不回显)">
+                <input type="text" id="base-url" placeholder="API基础URL (本地模型或代理必填)">
+                <button type="submit" id="save-config-btn">保存</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
