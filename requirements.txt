@@ -6,3 +6,4 @@ python-dotenv
 Werkzeug
 Flask-JWT-Extended
 requests
+pytest

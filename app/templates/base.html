@@ -1,6 +1,6 @@
 <!doctype html>
 <title>{% block title %}{% endblock %} - Word Soul</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 <nav>
   <h1><a href="{{ url_for('index') }}">Word Soul</a></h1>
   <ul>
@@ -22,3 +22,15 @@
   {% endfor %}
   {% block content %}{% endblock %}
 </section>
+
+<footer>
+    <p>
+        <a href="https://github.com/rewrz/word_soul" target="_blank" rel="noopener noreferrer">GitHub</a> |
+        <a href="https://rewrz.com" target="_blank" rel="noopener noreferrer">Blog</a>
+    </p>
+    <p>&copy; <span id="copyright-year-base"></span> Word Soul. Released under the MIT License.</p>
+</footer>
+<script>
+    // 动态更新版权年份
+    document.getElementById('copyright-year-base').textContent = new Date().getFullYear();
+</script>

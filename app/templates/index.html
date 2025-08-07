@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <div class="container">
+    <div class="container" id="login-container">
         <header>
             <h1>言灵</h1>
             <p class="subtitle">Kotodama / Word Soul</p>
@@ -21,7 +21,7 @@
                         <h2>登录纪传</h2>
                         <input type="text" id="login-username" placeholder="名讳 (Username)" required>
                         <input type="password" id="login-password" placeholder="密语 (Password)" required>
-                        <button type="submit">进入</button>
+                        <button type="submit" class="styled-button">进入</button>
                         <p class="auth-toggle-link">没有账号？ <a href="#" id="show-register-link">注册新账号</a></p>
                     </form>
                     
@@ -29,7 +29,7 @@
                         <h2>初入此界</h2>
                         <input type="text" id="register-username" placeholder="名讳 (Username)" required>
                         <input type="password" id="register-password" placeholder="密语 (Password)" required>
-                        <button type="submit">注册</button>
+                        <button type="submit" class="styled-button">注册</button>
                         <p class="auth-toggle-link">已有账号？ <a href="#" id="show-login-link">直接登录</a></p>
                     </form>
 
@@ -43,27 +43,31 @@
                 <div id="session-list">
                     <!-- 游戏存档将动态加载于此 -->
                 </div>
-                <button id="show-create-world-btn">咏唱创世之言</button>
-                <button id="manage-ai-configs-btn">管理AI模型</button>
-                <button id="logout-btn">退出此界</button>
+                <div id="create-world-btn">
+                    <button id="show-create-world-btn" class="styled-button">咏唱创世之言</button>
+                    <button id="manage-ai-configs-btn" class="styled-button">管理AI模型</button>
+                    <button id="logout-btn" class="styled-button">退出此界</button>
+                </div>
             </div>
 
             <!-- 创世视图 -->
             <div id="create-world-view" class="view" style="display: none;">
                 <h2>创世咏唱</h2>
                 <form id="create-world-form">
-                    <input type="text" id="world-name" placeholder="此界之名" required>
-                    <textarea id="character-description" placeholder="吾身之形" rows="3" required></textarea>
-                    <textarea id="world-rules" placeholder="万物之律" rows="5" required></textarea>
-                    <textarea id="initial-scene" placeholder="初始之景" rows="3" required></textarea>
-                    <textarea id="narrative-principles" placeholder="叙事原则" rows="3" required></textarea>
+                    <input type="text" id="world-name" placeholder="此界之名：为你的世界命名" required>
+                    <textarea id="character-description" placeholder="吾身之形：详细描述你将扮演的角色" rows="3" required></textarea>
+                    <textarea id="world-rules" placeholder="万物之律：设定世界的核心规则、物理法则、魔法体系等" rows="5" required></textarea>
+                    <textarea id="initial-scene" placeholder="初始之景：描述游戏开始时的具体场景和氛围" rows="3" required></textarea>
+                    <textarea id="narrative-principles" placeholder="叙事原则：定义故事的基调（例如：英雄史诗、黑暗奇幻、赛博朋克、轻松日常等）" rows="3" required></textarea>
                     <div class="form-group">
                         <label for="creation-ai-config-select">咏唱所用AI模型:</label>
                         <select id="creation-ai-config-select" required></select>
                     </div>
-                    <button type="submit">创造世界</button>
-                    <button type="button" id="assist-create-world-btn">AI辅助咏唱</button>
-                    <button type="button" id="cancel-create-world-btn" class="secondary">返回</button>
+                    <div id="create-world-btn-container">
+                        <button type="submit" class="styled-button">创造世界</button>
+                        <button type="button" id="assist-create-world-btn" class="styled-button">AI辅助咏唱</button>
+                        <button type="button" id="cancel-create-world-btn" class="styled-button secondary">返回</button>
+                    </div>
                 </form>
             </div>
 
@@ -78,14 +82,33 @@
                     <!-- 新增：游戏状态侧边栏 -->
                     <div id="game-sidebar">
                         <h3>吾身之况</h3>
-                        <div id="player-stats">
-                            <h4>任务</h4>
+                        <div class="sidebar-section">
+                            <h4>角色属性</h4>
+                            <ul id="player-stats-list">
+                                <!-- 玩家属性将由JS动态填充到这里 -->
+                            </ul>
+                        </div>
+                        <div class="sidebar-section">
+                            <h4>当前位置</h4>
+                            <p id="current-location">未知之地</p>
+                        </div>
+
+                        <div class="sidebar-section">
+                            <h4>任务纪要</h4>
                             <ul id="quest-list">
                                 <!-- 任务将动态加载于此 -->
                             </ul>
-                            <h4>物品</h4>
+                        </div>
+                        <div class="sidebar-section">
+                            <h4>行囊物品</h4>
                             <ul id="inventory-list">
                                 <!-- 物品将动态加载于此 -->
+                            </ul>
+                        </div>
+                        <div class="sidebar-section">
+                            <h4>技能冷却</h4>
+                            <ul id="cooldown-list">
+                                <!-- 技能冷却将动态加载于此 -->
                             </ul>
                         </div>
                     </div>
@@ -99,7 +122,7 @@
                         </div>
                         <form id="action-form">
                             <input type="text" id="action-input" placeholder="言出法随..." autocomplete="off" required>
-                            <button type="submit">执行</button>
+                            <button type="submit" class="styled-button">执行</button>
                         </form>
                         <button id="retry-ai-btn" class="secondary small-btn">重试</button>
                     </div>
@@ -123,11 +146,19 @@
                         <!-- AI配置将动态加载于此 -->
                     </tbody>
                 </table>
-                <button id="show-add-config-modal-btn">添加新配置</button>
-                <button id="back-to-menu-from-config-btn" class="secondary">返回主菜单</button>
+                <button id="show-add-config-modal-btn" class="styled-button">添加新配置</button>
+                <button id="back-to-menu-from-config-btn" class="styled-button secondary">返回主菜单</button>
             </div>
 
         </main>
+
+        <footer>
+            <p>
+                <a href="https://github.com/rewrz/word_soul" target="_blank" rel="noopener noreferrer">GitHub</a> |
+                <a href="https://rewrz.com" target="_blank" rel="noopener noreferrer">Blog</a>
+            </p>
+            <p>&copy; <span id="copyright-year"></span> 言灵 Kotodama. Released under the MIT License.</p>
+        </footer>
     </div>
 
     <!-- 新增：AI配置模态框 (用于添加/编辑) -->
@@ -149,10 +180,13 @@
                 <input type="password" id="api-key" placeholder="API Key (敏感信息，保存后不回显)">
                 <input type="text" id="base-url" placeholder="API基础URL (本地模型或代理必填)">
                 <button type="submit" id="save-config-btn">保存</button>
-            </form>
+            </form>            
         </div>
     </div>
 
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script>
+        document.getElementById('copyright-year').textContent = new Date().getFullYear();
+    </script>
 </body>
 </html>

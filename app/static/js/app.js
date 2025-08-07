@@ -1,4 +1,4 @@
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
     // --- Constants & State ---
     const API_URL = '/api';
     const state = {
@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
         lastPlayerAction: null, // 新增：存储上一次玩家的行动
         aiConfigs: [], // 新增：缓存用户的AI配置
     };
+
 
     // --- DOM Elements ---
     const views = document.querySelectorAll('.view');
@@ -40,6 +41,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const actionInput = document.getElementById('action-input');
     const retryAiBtn = document.getElementById('retry-ai-btn');
     const questList = document.getElementById('quest-list');
+    const currentLocation = document.getElementById('current-location');
+    const playerStatsList = document.getElementById('player-stats-list'); // 新增：玩家属性列表
+    const cooldownList = document.getElementById('cooldown-list');
     const inventoryList = document.getElementById('inventory-list');
     const changeGameAiBtn = document.getElementById('change-game-ai-btn');
     const backToMenuBtn = document.getElementById('back-to-menu-btn');
@@ -169,6 +173,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Main Menu Logic ---
+
     async function loadAndShowMainMenu() {
         const response = await fetchWithAuth('/sessions');
         if (response && response.ok) { // This is the success path
@@ -183,6 +188,7 @@ document.addEventListener('DOMContentLoaded', () => {
             throw new Error(`Failed to load sessions with status: ${response ? response.status : 'N/A'}`);
         }
     }
+
 
     function renderSessions(sessions) {
         sessionList.innerHTML = '';
@@ -209,7 +215,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- 使用事件委托处理纪事列表中的所有点击事件 ---
     sessionList.addEventListener('click', (e) => {
         const target = e.target;
         // 使用 .closest() 查找按钮，这样即使用户点到按钮内的图标也能正确响应
@@ -228,39 +233,64 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+
     // --- World Creation Logic ---
     async function showCreateWorldView() {
         // 在显示视图前，先获取AI配置并填充下拉菜单
         await populateAiConfigSelect(creationAiConfigSelect, state.activeAiConfigId);
         showView('create-world-view');
     }
-
     // --- World Creation Logic ---
     async function handleCreateWorld(e) {
         e.preventDefault();
-        const worldData = {
-            world_name: document.getElementById('world-name').value,
-            character_description: document.getElementById('character-description').value,
-            world_rules: document.getElementById('world-rules').value,            initial_scene: document.getElementById('initial-scene').value,
-            narrative_principles: document.getElementById('narrative-principles').value,            // 修改：从创世页面的下拉菜单中获取AI配置ID
-            active_ai_config_id: creationAiConfigSelect.value
-        };
+        const submitBtn = createWorldForm.querySelector('button[type="submit"]');
+        const originalBtnText = submitBtn.textContent;
 
-        const response = await fetchWithAuth('/worlds', {
-            method: 'POST',
-            body: JSON.stringify(worldData),
-        });
+        showWorldFormSkeleton();
+        submitBtn.disabled = true;
+        assistCreateWorldBtn.disabled = true;
+        cancelCreateWorldBtn.disabled = true;
+        submitBtn.textContent = '创造中...';
 
-        if (response && response.ok) {
-            const data = await response.json();
-            createWorldForm.reset();
-            // 创造世界后，我们获得了新的会话ID
-            // 调用加载函数来开始游戏，确保流程统一
-            loadSessionAndStartGame(data.session_id);
-        } else {
-            alert('世界创造失败，请检查输入。');
+        try {
+            const worldName = document.getElementById('world-name').value;
+            const worldRules = document.getElementById('world-rules').value;
+            const initialScene = document.getElementById('initial-scene').value;
+            const narrativePrinciples = document.getElementById('narrative-principles').value;
+
+            const worldKeywords = `世界名称: ${worldName}; 核心规则: ${worldRules}; 初始场景: ${initialScene}; 叙事原则: ${narrativePrinciples}`;
+
+            const worldData = {
+                world_keywords: worldKeywords,
+                player_description: document.getElementById('character-description').value,
+                active_ai_config_id: creationAiConfigSelect.value
+            };
+
+            const response = await fetchWithAuth('/worlds', {
+                method: 'POST',
+                body: JSON.stringify(worldData),
+            });
+
+            if (response && response.ok) {
+                const data = await response.json();
+                createWorldForm.reset();
+                loadSessionAndStartGame(data.session_id);
+            } else {
+                const errorData = response ? await response.json().catch(() => ({})) : { error: '未知错误' };
+                alert(`世界创造失败: ${errorData.details || errorData.error || '请检查输入或后台日志。'}`);
+            }
+        } catch (error) {
+            console.error('World creation failed:', error);
+            alert('创造世界时发生网络错误，请重试。');
+        } finally {
+            hideWorldFormSkeleton();
+            submitBtn.disabled = false;
+            assistCreateWorldBtn.disabled = false;
+            cancelCreateWorldBtn.disabled = false;
+            submitBtn.textContent = originalBtnText;
         }
     }
+
 
     async function handleAssistCreateWorld() {
         const currentData = {
@@ -273,35 +303,42 @@ document.addEventListener('DOMContentLoaded', () => {
             active_ai_config_id: creationAiConfigSelect.value
         };
 
-        // 提供加载反馈
+        showWorldFormSkeleton();
+
         assistCreateWorldBtn.disabled = true;
         assistCreateWorldBtn.textContent = '咏唱中...';
 
-        const response = await fetchWithAuth('/worlds/assist', {
-            method: 'POST',
-            body: JSON.stringify(currentData),
-        });
+        try {
+            const response = await fetchWithAuth('/worlds/assist', {
+                method: 'POST',
+                body: JSON.stringify(currentData),
+            });
 
-        assistCreateWorldBtn.disabled = false; // 恢复按钮
-        assistCreateWorldBtn.textContent = 'AI辅助咏唱';
-
-        if (response && response.ok) {
-            const assistedData = await response.json();
-            // 检查AI是否返回了错误信息
-            if (assistedData.error) {
-                alert(`AI辅助失败: ${assistedData.error}`);
-                return;
+            if (response && response.ok) {
+                const assistedData = await response.json();
+                if (assistedData.error) {
+                    alert(`AI辅助失败: ${assistedData.error}`);
+                    return;
+                }
+                document.getElementById('world-name').value = assistedData.world_name || '';
+                document.getElementById('character-description').value = assistedData.character_description || '';
+                document.getElementById('world-rules').value = assistedData.world_rules || '';
+                document.getElementById('initial-scene').value = assistedData.initial_scene || '';
+                document.getElementById('narrative-principles').value = assistedData.narrative_principles || '';
+            } else {
+                const errorData = response ? await response.json().catch(() => ({ error: '无法解析错误响应' })) : { error: '未知网络错误' };
+                alert(`AI辅助失败: ${errorData.error || '请稍后再试。'}`);
             }
-            document.getElementById('world-name').value = assistedData.world_name || '';
-            document.getElementById('character-description').value = assistedData.character_description || '';
-            document.getElementById('world-rules').value = assistedData.world_rules || '';
-            document.getElementById('initial-scene').value = assistedData.initial_scene || '';
-            document.getElementById('narrative-principles').value = assistedData.narrative_principles || '';
-        } else {
-            const errorData = response ? await response.json() : { error: '未知错误' };
-            alert(`AI辅助失败: ${errorData.error || '请稍后再试。'}`);
+        } catch (error) {
+            console.error('AI辅助请求时发生网络错误:', error);
+            alert('AI辅助请求失败，请检查网络连接或稍后再试。');
+        } finally {
+            assistCreateWorldBtn.disabled = false;
+            assistCreateWorldBtn.textContent = 'AI辅助咏唱';
+            hideWorldFormSkeleton();
         }
     }
+
 
     // --- Game Logic ---
     async function loadSessionAndStartGame(sessionId) { // 负责加载
@@ -316,6 +353,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error("无法加载会话:", response);
         }
     }
+
 
     function startGame(sessionData) { // 负责根据数据渲染游戏界面
         console.log("正在开始游戏，读取到的存档数据:", sessionData);
@@ -353,6 +391,7 @@ document.addEventListener('DOMContentLoaded', () => {
             gameLog.scrollTop = gameLog.scrollHeight;
         }
     }
+
     async function handleActionSubmit(e, actionText) {
         if (e) e.preventDefault();
         const action = actionText || actionInput.value.trim();
@@ -367,26 +406,52 @@ document.addEventListener('DOMContentLoaded', () => {
         // Display player action immediately
         appendLog(action, 'player');
 
-        // 在请求开始时隐藏重试按钮，并可以添加加载状态
+        // --- UI Loading State ---
+        let requestSucceeded = false;
         retryAiBtn.style.display = 'none';
+        actionInput.disabled = true;
+        gameSuggestions.querySelectorAll('button').forEach(btn => btn.disabled = true);
 
-        // const response = {data:{suggested_choices:["1","2"],HP_CHANGE:"",UPDATE_QUEST_STATUS:"",REMOVE_ITEM_FROM_INVENTORY:"",ADD_ITEM_TO_INVENTORY:"",PLAYER_MESSAGE:"",DESCRIPTION:"111"}};
-        const response = await fetchWithAuth(`/sessions/${state.currentSessionId}/action`, {
-            method: 'POST',
-            body: JSON.stringify({ action }),
-        });
+        // Create and append the skeleton placeholder for the AI response
+        const skeletonEntry = document.createElement('div');
+        skeletonEntry.className = 'log-entry ai skeleton';
+        // Add some placeholder lines to make it look like text is loading
+        skeletonEntry.innerHTML = '<span>&nbsp;</span><span>&nbsp;</span><span>&nbsp;</span>';
+        gameLog.appendChild(skeletonEntry);
+        gameLog.scrollTop = gameLog.scrollHeight;
 
-        if (response && response.ok) {
-            const data = await response.json();
-            retryAiBtn.style.display = 'inline-block'; // 始终显示重试按钮
-            renderGameTurn(data);
-            const errorData = response ? await response.json().catch(() => ({})) : { error: '未知错误' };
-            // 显示错误信息，无论成功与否都显示重试按钮
+        try {
+            const response = await fetchWithAuth(`/sessions/${state.currentSessionId}/action`, {
+                method: 'POST',
+                body: JSON.stringify({ action }),
+            });
+
+            gameLog.removeChild(skeletonEntry);
+
+            if (response && response.ok) {
+                const data = await response.json();
+                renderGameTurn(data);
+                requestSucceeded = true;
+            } else {
+                const errorData = response ? await response.json().catch(() => ({})) : { error: '未知错误' };
+                appendLog(`世界之灵没有回应... (${errorData.error || '请重试'})`, 'message');
+            }
+        } catch (error) {
+            console.error('Action submission failed:', error);
+            if (skeletonEntry.parentNode === gameLog) {
+                gameLog.removeChild(skeletonEntry);
+            }
+            appendLog('与世界之灵的连接中断，请检查网络并重试。', 'message');
+        } finally {
             retryAiBtn.style.display = 'inline-block';
-
-            appendLog(`世界之灵没有回应... (${errorData.error || '请重试'})`, 'message');
+            actionInput.disabled = false;
+            actionInput.focus();
+            if (!requestSucceeded) {
+                gameSuggestions.querySelectorAll('button').forEach(btn => btn.disabled = false);
+            }
         }
     }
+
 
     // 为重试按钮绑定事件监听
     retryAiBtn.addEventListener('click', () => {
@@ -398,6 +463,7 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('没有找到上次的玩家行动。');
         }
     });
+
 
     function renderGameTurn(data) {
         if (data.description) {
@@ -415,18 +481,37 @@ document.addEventListener('DOMContentLoaded', () => {
         renderGameSuggestions(data.suggested_choices);
     }
 
+
     function renderGameSuggestions(choices) {
         gameSuggestions.innerHTML = '';
         if (choices && choices.length > 0) {
             choices.forEach(choice => {
                 const btn = document.createElement('button');
                 btn.className = 'suggestion-btn';
-                btn.textContent = choice;
-                btn.addEventListener('click', () => handleActionSubmit(null, choice));
+                // 检查choice是对象还是旧的字符串格式，以实现向后兼容
+                if (typeof choice === 'object' && choice !== null && choice.display_text) {
+                    btn.textContent = choice.display_text;
+                    // 如果action_command存在，则使用它，否则回退到使用display_text
+                    const actionCommand = choice.action_command !== undefined ? choice.action_command : choice.display_text;
+                    btn.addEventListener('click', () => handleActionSubmit(null, actionCommand));
+
+                    // 新增：如果建议包含详细信息，则显示它们
+                    if (choice.details && Array.isArray(choice.details)) {
+                        const detailsSpan = document.createElement('span');
+                        detailsSpan.className = 'suggestion-details';
+                        detailsSpan.textContent = `(${choice.details.join(', ')})`;
+                        btn.appendChild(detailsSpan);
+                    }
+                } else {
+                    // 对旧格式（纯字符串）的兼容处理
+                    btn.textContent = choice;
+                    btn.addEventListener('click', () => handleActionSubmit(null, choice));
+                }
                 gameSuggestions.appendChild(btn);
             });
         }
     }
+
 
     function appendLog(text, type) {
         const entry = document.createElement('div');
@@ -436,10 +521,28 @@ document.addEventListener('DOMContentLoaded', () => {
         gameLog.scrollTop = gameLog.scrollHeight; // Auto-scroll to bottom
     }
 
+
     function renderPlayerStatus(currentState) {
-        // 渲染物品清单
+        // 1. 渲染玩家属性
+        playerStatsList.innerHTML = '';
+        const attributes = currentState.attributes || {};
+        if (Object.keys(attributes).length === 0) {
+            playerStatsList.innerHTML = '<li>属性未知</li>';
+        } else {
+            for (const [name, value] of Object.entries(attributes)) {
+                const li = document.createElement('li');
+                // 将数字值四舍五入到两位小数以获得更好的显示效果
+                const displayValue = typeof value === 'number' ? Math.round(value * 100) / 100 : value;
+                li.innerHTML = `<strong>${name}:</strong> ${displayValue}`;
+                playerStatsList.appendChild(li);
+            }
+        }
+
+        // 新增：渲染当前位置
+        currentLocation.textContent = currentState.current_location || '未知之地';
+
+        // 2. 渲染物品清单
         inventoryList.innerHTML = '';
-        let statsHtml = "";
         const inventory = currentState.inventory || [];
         if (inventory.length === 0) {
             inventoryList.innerHTML = '<li>空空如也</li>';
@@ -451,25 +554,34 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        // 渲染任务列表
+        // 3. 渲染任务列表
         questList.innerHTML = '';
         const quests = currentState.active_quests || {};
         if (Object.keys(quests).length === 0) {
             questList.innerHTML = '<li>暂无任务</li>';
         } else {
-         for (const [name, status] of Object.entries(quests)) {
+            for (const [name, status] of Object.entries(quests)) {
                 const li = document.createElement('li');
                 li.innerHTML = `<strong>${name}:</strong> ${status}`;
                 questList.appendChild(li);
             }
         }
-        if (currentState.hp!=null){
-             statsHtml += `<li><strong>HP:</strong> ${currentState.hp}</li>`;
-             if (statsHtml!=""){
-                  questList.innerHTML +=statsHtml;
+
+        // 4. 渲染技能冷却
+        cooldownList.innerHTML = '';
+        const cooldowns = currentState.cooldowns || {};
+        if (Object.keys(cooldowns).length === 0) {
+            cooldownList.innerHTML = '<li>无</li>';
+        } else {
+            for (const [name, turns] of Object.entries(cooldowns)) {
+                const li = document.createElement('li');
+                // 技能名称和剩余回合数
+                li.innerHTML = `<strong>${name}:</strong> ${turns} 回合`;
+                cooldownList.appendChild(li);
             }
         }
     }
+
     // --- AI Config Logic ---
     async function populateAiConfigSelect(selectElement, selectedId) {
         // 这是一个辅助函数，用于使用AI配置填充<select>元素
@@ -501,6 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+
     async function handleChangeGameAi(sessionId) {
         // “更换AI模型”按钮的处理器
         // 如果AI配置列表为空，先加载它
@@ -526,6 +639,7 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('无效的ID。');
         }
     }
+
     // --- AI Config Logic ---
     async function showAiConfigView() {
         const response = await fetchWithAuth('/ai-configs');
@@ -537,6 +651,7 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('获取AI配置失败。');
         }
     }
+
 
     function renderAiConfigs() {
         aiConfigList.innerHTML = '';
@@ -566,12 +681,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+
     function handleSetActiveAiConfig(configId) {
         state.activeAiConfigId = configId;
         localStorage.setItem('active_ai_config_id', configId);
         alert('默认AI配置已更新！');
         renderAiConfigs(); // 重新渲染列表以更新按钮状态和高亮
     }
+
 
     function openAiConfigModal(config = null) {
         aiConfigForm.reset();
@@ -592,11 +709,13 @@ document.addEventListener('DOMContentLoaded', () => {
         aiConfigModal.style.display = 'flex';
     }
 
+
     function closeAiConfigModal() {
         aiConfigModal.style.display = 'none';
     }
 
     async function handleAiConfigFormSubmit(e) {
+
         e.preventDefault();
         const configId = configIdInput.value;
         const data = {
@@ -625,6 +744,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+
     async function handleDeleteAiConfig(configId) {
         if (!confirm('确定要删除这个AI配置吗？')) return;
 
@@ -634,6 +754,38 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             alert('删除失败。');
         }
+    }
+
+    function showWorldFormSkeleton() {
+        const formElements = [
+            'world-name',
+            'character-description',
+            'world-rules',
+            'initial-scene',
+            'narrative-principles'
+        ];
+
+        formElements.forEach(id => {
+            const element = document.getElementById(id);
+            element.classList.add('skeleton');
+            element.disabled = true;
+        });
+    }
+
+    function hideWorldFormSkeleton() {
+        const formElements = [
+            'world-name',
+            'character-description',
+            'world-rules',
+            'initial-scene',
+            'narrative-principles'
+        ];
+
+        formElements.forEach(id => {
+            const element = document.getElementById(id);
+            element.classList.remove('skeleton');
+            element.disabled = false;
+        });
     }
 
     // --- Initializer ---

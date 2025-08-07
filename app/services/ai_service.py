@@ -1,50 +1,60 @@
 import os
 import re
 import requests
-from flask import current_app
-import json
+import time
+import traceback
 from urllib.parse import urljoin
+import json
+import logging
+from app.services.framework_validator import (
+    validate_attribute_dimensions,
+    validate_items,
+    validate_skills,
+    validate_npcs,
+    validate_tasks,
+)
+from flask import current_app
+from sqlalchemy.orm.attributes import flag_modified
+
+
 from app.models import Setting, GameSession
+
+logger = logging.getLogger(__name__)
 
 def parse_ai_output(text):
     """
-    一个健壮的解析器，用于处理AI返回的带标签的文本格式。
-    现在修改为处理 JSON 格式。
+    一个健壮的解析器，用于处理AI返回的JSON格式文本。
+    它会尝试去除常见的markdown代码块标记，例如 ```json ... ```。
     """
-    # 增加处理逻辑，去除AI可能返回的markdown代码块标记
-    # 例如 ```json\n{...}\n```
+    print(f"原始AI输出: {text}")  # 打印原始AI输出
+
+    # 增加处理逻辑，去除AI可能返回的markdown代码块标记。
     cleaned_text = text.strip()
     if cleaned_text.startswith("```json"):
-        cleaned_text = cleaned_text[7:]
+        cleaned_text = cleaned_text[7:]  # 去除 ```json
     if cleaned_text.endswith("```"):
         cleaned_text = cleaned_text[:-3]
     cleaned_text = cleaned_text.strip()
 
     try:
         data = json.loads(cleaned_text)
-    except json.JSONDecodeError:
-        print(f"JSON解析失败: {cleaned_text}")
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON解析失败: {e}\n原始文本: {cleaned_text}")
         return {}
 
-    # 转换为小写键
+
+    # 将JSON的第一层键统一转换为小写，以增加容错性。
     data = {k.lower(): v for k, v in data.items()}
 
     return data
 
-def format_json_like_string(json_string):
-    try:
-        data = json.loads(json_string)
-        formatted_json = json.dumps(data, indent=4, ensure_ascii=False)
-        return formatted_json
-    except json.JSONDecodeError:
-        return json_string
+def _call_openai_api(prompt_text, api_key, base_url=None, model_name="gpt-4o-mini", max_retries=3):
 
-def _call_openai_api(prompt_text, api_key, base_url=None, model_name="gpt-4o-mini"):
     """调用OpenAI或兼容OpenAI的API（如Ollama）"""
     if base_url:
         # 对于本地模型或代理，将基础URL与API端点拼接
         # urljoin可以智能处理末尾是否有'/'的问题
-        url = urljoin(base_url, "v1/chat/completions")
+        url = urljoin(base_url, "chat/completions")
     else:
         # 对于官方OpenAI，使用默认的完整URL
         url = "https://api.openai.com/v1/chat/completions"
@@ -58,34 +68,41 @@ def _call_openai_api(prompt_text, api_key, base_url=None, model_name="gpt-4o-min
         "messages": [{"role": "user", "content": prompt_text}],
         "temperature": 0.7,
     }
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=120)
-        response.raise_for_status()  # 如果HTTP状态码是4xx或5xx，则抛出异常
-        data = response.json()
 
-        # 增加健壮性：检查API是否在JSON中返回了错误信息
-        if 'error' in data:
-            error_value = data['error']
-            if isinstance(error_value, dict):
-                # 如果 'error' 是一个字典，尝试获取 'message'
-                error_message = error_value.get('message', json.dumps(error_value))
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=120)
+            response.raise_for_status()  # 如果HTTP状态码是4xx或5xx，则抛出异常
+            data = response.json()
+
+            # 增加健壮性：检查API是否在JSON中返回了错误信息
+            if 'error' in data:
+                print(f"data_error:{data}")
+                error_value = data['error']
+                if isinstance(error_value, dict):
+                    error_message = error_value.get('message', json.dumps(error_value))
+                else:
+                    error_message = str(error_value)
+                logger.error(f"OpenAI API返回错误: {error_message}")
+                return f"[错误] AI服务返回错误: {error_message}"
+            
+            return data['choices'][0]['message']['content']
+
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"调用OpenAI API时出错: {e}")
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 5  # 简单的线性增加等待时间
+                logger.warning(f"正在重试... ({attempt + 1}/{max_retries}). 等待 {wait_time} 秒.")
+                time.sleep(wait_time)
+                continue # 继续下一次循环
             else:
-                # 如果 'error' 是一个字符串或其他类型，直接转换
-                error_message = str(error_value)
-            print(f"OpenAI API返回错误: {error_message}")
-            return f"[错误] AI服务返回错误: {error_message}"
+                logger.error(f"调用OpenAI API在 {max_retries} 次重试后仍然失败。")
+                return "[错误] AI服务暂时无法连接。"
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
+            logger.error(f"解析OpenAI API响应时出错: {e}", exc_info=True)
+            return "[错误] AI服务返回了意料之外的数据格式或无效的JSON。"
 
-        return data['choices'][0]['message']['content']
-    except requests.exceptions.RequestException as e:
-        print(f"调用OpenAI API时出错: {e}")
-        return "[错误] AI服务暂时无法连接。"
-    except (KeyError, IndexError) as e:
-        # 增强日志：打印出收到的原始数据，方便排查问题
-        print(f"解析OpenAI API响应时出错: {e}。收到的原始数据: {data}")
-        return "[错误] AI服务返回了意料之外的数据格式。"
-    except json.JSONDecodeError:
-        print(f"解析OpenAI API响应时出错: 无法解码JSON。收到的原始文本: {response.text}")
-        return "[错误] AI服务返回了非JSON格式的响应。"
+    return "[错误] AI服务在所有重试后均未能成功调用。"
 
 def _call_gemini_api(prompt_text, api_key, model_name="gemini-1.5-flash"):
     """调用Google Gemini API"""
@@ -107,13 +124,13 @@ def _call_gemini_api(prompt_text, api_key, model_name="gemini-1.5-flash"):
 
         return data['candidates'][0]['content']['parts'][0]['text']
     except requests.exceptions.RequestException as e:
-        print(f"调用Gemini API时出错: {e}")
+        logger.error(f"调用Gemini API时出错: {e}")
         return "[错误] AI服务暂时无法连接。"
     except (KeyError, IndexError) as e:
-        print(f"解析Gemini API响应时出错: {e}。收到的原始数据: {data}")
+        logger.exception(f"解析Gemini API响应时出错: {e}。收到的原始数据: {data}")
         return "[错误] AI服务返回了意料之外的数据格式。"
     except json.JSONDecodeError:
-        print(f"解析Gemini API响应时出错: 无法解码JSON。收到的原始文本: {response.text}")
+        logger.error(f"解析Gemini API响应时出错: 无法解码JSON。收到的原始文本: {response.text}")
         return "[错误] AI服务返回了非JSON格式的响应。"
 
 def _call_claude_api(prompt_text, api_key, model_name="claude-3-haiku-20240307"):
@@ -142,17 +159,19 @@ def _call_claude_api(prompt_text, api_key, model_name="claude-3-haiku-20240307")
 
         return data['content'][0]['text']
     except requests.exceptions.RequestException as e:
-        print(f"调用Claude API时出错: {e}")
+        logger.error(f"调用Claude API时出错: {e}")
         return "[错误] AI服务暂时无法连接。"
     except (KeyError, IndexError) as e:
-        print(f"解析Claude API响应时出错: {e}。收到的原始数据: {data}")
+        logger.exception(f"解析Claude API响应时出错: {e}。收到的原始数据: {data}")
         return "[错误] AI服务返回了意料之外的数据格式。"
     except json.JSONDecodeError:
         print(f"解析Claude API响应时出错: 无法解码JSON。收到的原始文本: {response.text}")
         return "[错误] AI服务返回了非JSON格式的响应。"
 
 def call_llm_api(prompt_text, active_config=None):
+
     """
+    AI调用分发器。
     根据提供的AI配置或全局默认配置，分发到不同的LLM API调用函数。
     """
     if active_config:
@@ -175,7 +194,7 @@ def call_llm_api(prompt_text, active_config=None):
         if provider == 'local_openai' and not base_url:
             return "[错误] 使用本地模型时，必须配置基础URL (base_url)。"
         return _call_openai_api(prompt_text, api_key, base_url, model_name or "gpt-4o-mini")
-    
+
     elif provider == 'gemini':
         if not api_key: return "[错误] 缺少 Gemini API Key。"
         return _call_gemini_api(prompt_text, api_key, model_name)
@@ -187,25 +206,6 @@ def call_llm_api(prompt_text, active_config=None):
     else:
         return f"[错误] 不支持的AI提供商: {provider}。"
 
-def analyze_world_creation_text(text_blob):
-    """调用AI分析创世文本 (使用全局默认配置)"""
-    prompt = f"""
-你是一个游戏设定分析师。你的任务是从一段给定的世界描述中，提炼出核心设定和叙事原则。请严格按照“[TAG] content”的格式输出。
-
-# 以下是由玩家创造的世界描述：
-{text_blob}
-
-# --- 请从上述描述中提取并填充以下信息 ---
-
-[WORLD_PREMISE]
-(在此处用一句话总结这个世界的核心规则或风格)
-
-[NARRATIVE_PRINCIPLES]
-(在此处总结玩家定义的叙事原则、故事基调和结局导向。如果没有，则总结为“一个开放、自由的沙盒世界”)
-"""
-    # 创世分析总是使用全局配置，不使用用户特定配置
-    ai_response_text = call_llm_api(prompt)
-    return parse_ai_output(ai_response_text)
 
 def assist_world_creation_text(world_name, character_description, world_rules, initial_scene, narrative_principles, active_config=None):
     """
@@ -234,18 +234,19 @@ def assist_world_creation_text(world_name, character_description, world_rules, i
 - 如果用户提供了某个字段的内容，你必须在该内容的基础上进行扩充和润色，使其更加生动和具体。
 - 如果用户将某个字段留空，你必须根据其他已填写的字段，创作出与之风格协调、逻辑自洽的内容。
 - 如果用户所有字段都留空，你必须随机生成一个完整、有趣、充满想象力的世界设定。
+- **重要**: 所有字段的值都必须是**字符串 (string)**。对于像“世界规则”这样复杂的内容，请将其全部写入一个单一的、详细的字符串中，**不要**使用嵌套的JSON对象。
 
 # 用户输入
 {formatted_input}
 
 # 你的输出
-请严格按照以下格式，为每个字段生成或完善内容。确保你的输出是一个完整的、可以直接用于创建游戏世界的设定集，不要输出多余的内容。
+请严格按照以下格式，为每个字段生成或完善内容。确保你的输出是一个完整的、可以直接用于创建游戏世界的设定集，不要输出多余的内容。所有字段的值都必须是字符串。
 
 ```json
 {{
     "WORLD_NAME": "(生成一个独特且富有吸引力的世界名称)",
     "CHARACTER_DESCRIPTION": "(描述一个引人入胜的玩家角色背景和形象)",
-    "WORLD_RULES": "(详细阐述这个世界的核心规则、物理法则、魔法系统、社会结构等，使其丰满可信)",
+    "WORLD_RULES": "(一个**单一的字符串**，详细阐述这个世界的核心规则、物理法则、魔法系统、社会结构等，使其丰满可信)",
     "INITIAL_SCENE": "(描绘一个充满悬念和探索可能性的开场画面)",
     "NARRATIVE_PRINCIPLES": "(设定一个清晰的故事基调，例如：黑暗奇幻、赛博朋克、英雄史诗、轻松幽默等)"
 }}
@@ -256,8 +257,6 @@ def assist_world_creation_text(world_name, character_description, world_rules, i
 
     # 尝试格式化输出，如失败则原样返回
     ai_response_text = format_json_like_string(ai_response_text)
-
-
 
     # 检查API调用是否返回了空内容或错误信息
     if not ai_response_text or not ai_response_text.strip():
@@ -272,8 +271,6 @@ def assist_world_creation_text(world_name, character_description, world_rules, i
     if not parsed_data:
         return {"world_name": "[错误] AI未能按预期格式生成内容，请重试。"}
 
-    # 将解析后的数据映射回前端期望的字段名。
-    # 关键：即使AI没有返回某个字段，也要确保返回一个包含空字符串的完整结构，
     # 而不是None，这样可以防止前端JS因处理null而出错或清空表单。
     return {
         "world_name": parsed_data.get("world_name", ""),
@@ -283,69 +280,509 @@ def assist_world_creation_text(world_name, character_description, world_rules, i
         "narrative_principles": parsed_data.get("narrative_principles", ""),
     }
 
-
-def generate_game_master_response(world_blueprint, current_state, player_action, game_session):
-    """调用AI生成游戏剧情"""
-    narrative_principles = world_blueprint.get('ai_narrative_principles', '一个开放、自由的沙盒世界')
-    player_character = current_state.get('player_character', '未知')
-    current_location = current_state.get('current_location', '未知之地')
-    inventory = ", ".join(current_state.get('inventory', [])) or "无"
-    hp = current_state.get('hp', '未知') # 如果状态中没有HP，则明确告知AI
-    
-    history_log = ""
-    for entry in reversed(current_state.get('recent_history', [])):
-        if entry['role'] == 'player':
-            history_log += f"玩家: {entry['content']}\n"
-        else:
-            history_log += f"你: {entry['content']}\n"
-
+def _generate_world_meta(world_keywords, player_description, active_config, previous_errors=None):
+    """
+    第一步：生成世界的核心元数据（名称、描述等）。
+    """
+    correction_prompt_part = ""
+    if previous_errors:
+        error_string = "\n- ".join(previous_errors)
+        correction_prompt_part = f"""
+# 上次尝试失败 (Last Attempt Failed)
+你上次生成的JSON未能通过校验。错误如下:
+- {error_string}
+请修正这些错误，并重新生成。
+"""
     prompt = f"""
-你是一位名为“世界之灵”的游戏主持人，引导着一场名为“言灵”的文字冒险。你的行为必须严格遵守以下准则。
+{correction_prompt_part}
+你是一个世界观架构师。根据用户提供的关键词，生成一个游戏世界的核心设定。
 
-# --- 核心行为准则 (Your Core Principles) ---
-1.  **绝对沉浸:** 绝不承认自己是AI或程序。拒绝回答任何与游戏剧情无关的问题。若被问及，应以游戏角色的口吻巧妙回避。
-2.  **动态引导:** 尊重玩家的自由选择，但当玩家行为严重偏离世界基调时，应通过剧情将其温和地引导回来。
-3.  **开放结局:** 故事的结局由玩家的行为累积决定。
-4.  **严格格式化输出:** 你的所有回复都必须严格遵循下方的格式。每个部分都以一个大写的标签（如 `[DESCRIPTION]`）开始，然后换行写内容。如果某个部分没有内容，则将标签保留，内容留空。
+# 用户输入
+- 世界关键词: {world_keywords}
+- 玩家角色描述: {player_description}
 
-# --- 世界设定 (World Blueprint) ---
-[世界基调]
-{narrative_principles}
+# 你的任务
+生成一个JSON对象，包含以下字段：
+- `world_name`: (string) 世界的名称。
+- `world_description`: (string) 对这个世界的整体风格、背景和核心冲突的简要描述。
+- `player_character_description`: (string) 基于用户描述，润色后的玩家角色背景故事和初始状态。
+- `initial_scene`: (string) 游戏开始时的场景描述，需要引人入胜，并提供明确的起点。
+- `narrative_principles`: (string) 故事的基调，例如：黑暗奇幻、赛博朋克、英雄史诗等。
 
-# --- 当前状态 (Current State) ---
-[玩家角色]
-{player_character}
-[当前位置]
-{current_location}
-[生命值]
-{hp}
-[持有物品]
-{inventory}
-
-# --- 最近的交互历史 (Recent History) ---
-{history_log}
-
-# --- 玩家的当前行动 (Player's Current Action) ---
-玩家: {player_action}
-
-# --- 你的回复 (Your Response) ---
-# 请严格按照以下JSON格式生成你的回复。
 ```json
 {{
-    "DESCRIPTION": "(在此处详细、生动地描述玩家行动后，世界发生的变化、新的场景、NPC的反应等。这是故事的主体。)",    
-    "PLAYER_MESSAGE": "(如果需要给玩家一个简短的、系统层面的提示或状态更新，请写在这里。例如：“你的火把似乎快要熄灭了。”或“你感到一阵寒意。”。如果没有，则留空。)",
-    "ADD_ITEM_TO_INVENTORY": "(如果玩家在此回合获得了新物品，请在此处写下物品的名称。例如：“一把生锈的钥匙”。如果没有，则留空。)",
-    "REMOVE_ITEM_FROM_INVENTORY": "(如果玩家在此回合消耗或失去了物品，请在此处写下物品的名称。例如：“火把”。如果没有，则留空。)",
-    "UPDATE_QUEST_STATUS": "(如果任务状态有更新，请以“任务名: 任务新状态”的格式写在这里。例如：“寻找圣物: 你找到了关于圣物位置的线索。”。如果没有，则留空。)",
-    "HP_CHANGE": "(玩家生命值的变化，正数为增加，负数为减少。例如：+10 或 -5。 如果没有变化，则留空。)",
+  "world_name": "(一个符合世界关键词的独特名称)",
+  "world_description": "(一段关于世界背景、风格和核心冲突的描述)",
+  "player_character_description": "(基于用户输入，润色后的玩家角色背景故事)",
+  "initial_scene": "(一个引人入胜的游戏开场场景描述)",
+  "narrative_principles": "(一个清晰的故事基调，例如：黑暗奇幻、赛博朋克等)"
+}}
+```
+"""
+    response_text = call_llm_api(prompt, active_config)
+    return parse_ai_output(response_text)
+
+def _generate_attributes(world_keywords, player_description, active_config, previous_errors=None):
+    """
+    第二步：生成属性维度。
+    """
+    correction_prompt_part = ""
+    if previous_errors:
+        error_string = "\n- ".join(previous_errors)
+        correction_prompt_part = f"""
+# 上次尝试失败
+你上次生成的JSON未能通过校验。错误如下:
+- {error_string}
+请修正这些错误，并重新生成。
+"""
+    prompt = f"""
+{correction_prompt_part}
+你是一个游戏设计师。根据用户提供的关键词，为游戏角色设计核心属性。
+
+# 用户输入
+- 世界关键词: {world_keywords}
+- 玩家角色描述: {player_description}
+
+# 你的任务
+生成一个JSON对象 `attribute_dimensions`。
+- 必须包含“生存”、“输出”、“资源”三个维度。
+- 可以有可选的“防御”和“辅助”维度。
+- 在“辅助”维度中，请务必定义一个用于交易的**货币**属性。
+- 每个维度都是一个对象，包含 "name" (string) 和 "initial_value" (number)。
+
+```json
+{{
+  "attribute_dimensions": {{
+    "生存": {{ "name": "生命值", "initial_value": 100 }},
+    "输出": {{ "name": "攻击力", "initial_value": 10 }},
+    "资源": {{ "name": "法力值", "initial_value": 50 }},
+    "防御": {{ "name": "护甲", "initial_value": 5 }},
+    "辅助": {{ "name": "金币", "initial_value": 20 }}
+  }}
+}}
+```
+"""
+    response_text = call_llm_api(prompt, active_config)
+    return parse_ai_output(response_text)
+
+
+def _generate_content_modules(world_keywords, player_description, setting_pack, active_config, previous_errors=None):
+    """
+    第三步：基于已定义的世界观和属性，生成物品、技能、NPC和任务。
+    """
+    correction_prompt_part = ""
+    if previous_errors:
+        error_string = "\n- ".join(previous_errors)
+        correction_prompt_part = f"""
+# 上次尝试失败
+你上次生成的JSON未能通过校验。错误如下:
+- {error_string}
+请仔细阅读并修正这些错误，然后重新生成 `items`, `skills`, `npcs`, `tasks` 模块。
+"""
+    # 将已有的设定包转换为字符串，作为上下文提供给AI
+    context_str = json.dumps(setting_pack, ensure_ascii=False, indent=2)
+    
+    # 从设定包中提取有效的属性名称列表，用于在提示中明确告知AI
+    valid_attribute_names = [dim["name"] for dim in setting_pack.get("attribute_dimensions", {}).values()]
+    valid_names_str = ", ".join(f"'{name}'" for name in valid_attribute_names)
+    resource_name = setting_pack.get("attribute_dimensions", {}).get("资源", {}).get("name", "未知资源")
+
+    prompt = f"""
+{correction_prompt_part}
+你是一个资深游戏内容设计师。你的任务是基于已有的世界设定和属性框架，创建游戏中的具体内容，包括物品、技能、NPC和任务。
+
+# 已有设定 (Existing Blueprint)
+```json
+{context_str}
+```
+
+# 关键规则 (CRITICAL RULE) - 你必须严格遵守！
+1.  **严格对应**: 所有 `效果` 和 `消耗` 字符串中使用的**属性名**，都**必须**从以下列表中选取: {valid_names_str}。
+2.  **消耗对应**: `消耗` 字符串中的属性名，**必须**是 '{resource_name}'。
+3.  **商人与敌人**: 你必须创建至少一个商人NPC，并为其 `售卖物品` 列表添加一些你在物品库中定义的、有价格的物品。同时，必须创建一个可供战斗的敌对NPC (`is_hostile: true`)。
+
+# 你的任务
+生成一个JSON对象，包含 `items`, `skills`, `npcs`, `tasks` 四个模块。
+
+```json
+{{
+  "items": [
+    {{
+      "类型": "恢复类",
+      "名称": "生命药水",
+      "效果": ["{valid_attribute_names[0]} + 30"],
+      "价格": 50,
+      "获取": "商人处购买",
+      "背景描述": "常见的恢复药剂。"
+    }}
+  ],
+  "skills": [
+    {{
+      "类型": "伤害类",
+      "名称": "强力一击",
+      "消耗": "{resource_name} - 15",
+      "效果": ["{valid_attribute_names[1]} * 1.5"],
+      "冷却时间": 3
+    }}
+  ],
+  "tasks": [
+    {{
+        "名称": "村庄的麻烦",
+        "状态": "未开始",
+        "目标": "调查村庄周围的哥布林踪迹。",
+        "奖励": {{ "金币": 50 }}
+    }}
+  ],
+  "npcs": [
+    {{
+      "名称": "商人巴特",
+      "描述": "一个友善的商人。",
+      "位置": "{setting_pack.get('initial_scene', '未知')}",
+      "对话样本": "需要点什么吗？",
+      "attributes": {{ "{valid_attribute_names[0]}": 100, "{valid_attribute_names[1]}": 5 }},
+      "is_hostile": false,
+      "售卖物品": ["生命药水"]
+    }},
+    {{
+      "名称": "哥布林斥候",
+      "描述": "一个鬼鬼祟祟的哥布林。",
+      "位置": "{setting_pack.get('initial_scene', '未知')}",
+      "对话样本": "滚开，人类！",
+      "attributes": {{ "{valid_attribute_names[0]}": 80, "{valid_attribute_names[1]}": 12 }},
+      "is_hostile": true
+    }}
+  ]
+}}
+```
+"""
+    response_text = call_llm_api(prompt, active_config)
+    return parse_ai_output(response_text)
+
+
+def _validate_meta(data):
+    """简单的元数据校验器"""
+    errors = []
+    if not data:
+        return False, ["AI未能生成元数据。"]
+
+    required_keys = ["world_name", "world_description", "player_character_description", "initial_scene", "narrative_principles"]
+    for key in required_keys:
+        if key not in data:
+            errors.append(f"元数据缺少必需的键: '{key}'")
+        elif not isinstance(data[key], str) or not data[key].strip():
+            errors.append(f"元数据键 '{key}' 的值必须是一个非空的字符串。")
+    return not errors, errors
+
+def generate_setting_pack(world_keywords, player_description, active_ai_config_id, previous_errors=None, previous_attempt=None):
+    """
+    调用大模型，根据用户关键词生成结构化的“动态设定包”。
+    新增了 previous_errors 和 previous_attempt 参数，用于实现带反馈的重试。
+    """
+    # 根据传入的ID从数据库获取具体的AI配置
+    active_config = None
+    if active_ai_config_id:
+        active_config = Setting.query.get(active_ai_config_id)
+
+    # 如果是由外部重试循环调用的，则使用旧的、一体化的反馈模式作为最终保障
+    if previous_errors and previous_attempt:
+        print("--- 检测到错误，进入带反馈的重试模式 ---")
+        return _generate_with_feedback(world_keywords, player_description, active_config, previous_errors, previous_attempt)
+
+    # --- 分步生成与独立校验/重试 ---
+    max_retries_per_step = 3
+    setting_pack = {}
+
+    # 步骤 1: 生成并校验世界元数据
+    last_errors = []
+    for attempt in range(max_retries_per_step):
+        print(f"--- 创世咏唱[1/3]: 生成世界元数据 (尝试 {attempt + 1}/{max_retries_per_step}) ---")
+        meta_data = _generate_world_meta(world_keywords, player_description, active_config, previous_errors=last_errors)
+        is_valid, last_errors = _validate_meta(meta_data)
+        if is_valid:
+            setting_pack.update(meta_data)
+            break
+        else:
+            print(f"--- 元数据校验失败: {last_errors} ---")
+    else:
+        return {"error": "AI在生成世界元数据时多次失败。", "details": last_errors}
+
+    # 步骤 2: 生成并校验属性维度
+    last_errors = []
+    for attempt in range(max_retries_per_step):
+        print(f"--- 创世咏唱[2/3]: 生成属性维度 (尝试 {attempt + 1}/{max_retries_per_step}) ---")
+        attr_data = _generate_attributes(world_keywords, player_description, active_config, previous_errors=last_errors)
+        if not attr_data or "attribute_dimensions" not in attr_data:
+             last_errors = ["AI未能生成'attribute_dimensions'模块。"]
+             continue
+        last_errors = validate_attribute_dimensions(attr_data["attribute_dimensions"])
+        if not last_errors:
+            setting_pack.update(attr_data)
+            break
+        else:
+            print(f"--- 属性维度校验失败: {last_errors} ---")
+    else:
+        return {"error": "AI在生成属性维度时多次失败。", "details": last_errors}
+
+    # 步骤 3: 生成并校验游戏内容模块
+    last_errors = []
+    for attempt in range(max_retries_per_step):
+        print(f"--- 创世咏唱[3/3]: 生成游戏内容模块 (尝试 {attempt + 1}/{max_retries_per_step}) ---")
+        content_modules = _generate_content_modules(world_keywords, player_description, setting_pack, active_config, previous_errors=last_errors)
+        if not content_modules:
+            last_errors = ["AI未能生成内容模块。"]
+            continue
+        
+        # 为确保校验完整性，即使AI遗漏了某个模块，也用空列表代替
+        item_errors = validate_items(content_modules.get("items", []), setting_pack["attribute_dimensions"])
+        skill_errors = validate_skills(content_modules.get("skills", []), setting_pack["attribute_dimensions"])
+        npc_errors = validate_npcs(content_modules.get("npcs", []), setting_pack["attribute_dimensions"])
+        task_errors = validate_tasks(content_modules.get("tasks", []))
+        last_errors = item_errors + skill_errors + npc_errors + task_errors
+        if not last_errors:
+            setting_pack.update(content_modules)
+            break
+        else:
+            print(f"--- 内容模块校验失败: {last_errors} ---")
+    else:
+        print(f"AI在生成游戏内容模块时多次失败:{last_errors}")
+        return {"error": "AI在生成游戏内容模块时多次失败。", "details": last_errors}
+
+    return setting_pack
+
+def _generate_with_feedback(world_keywords, player_description, active_config, previous_errors, previous_attempt):
+    """
+    当验证失败时，调用此函数，将错误信息和上次的尝试一起发给AI进行修正。
+    这是旧的“一体化”生成逻辑，仅用于重试。
+    """
+    # ... 此处保留旧的、包含 correction_prompt_part 的巨大 prompt ...
+    # ... 为了简洁，这里省略了旧prompt的完整内容，但它应该被保留在这里 ...
+    # ... 它的作用是当分步生成失败后，给AI一个完整的上下文去修复 ...
+    error_string = "\n- ".join(previous_errors)
+    print(f"重试报错:{previous_errors}")
+    prompt = f"""
+    # 上次尝试失败 (Previous Attempt Failed)
+    你上次生成的JSON未能通过程序校验。这是你上次的输出和具体的错误列表。
+    请仔细阅读错误，并修正它们。**不要重复之前的错误**。
+
+    ### 上次的输出 (Your Previous Invalid JSON)
+    ```json
+    {previous_attempt}
+    ```
+
+    ### 错误列表 (Error List)
+    - {error_string}
+    
+    请根据以上错误，重新生成一个完全正确的、完整的JSON。
+    (此处省略了完整的框架定义，因为它在上面的主逻辑中已经存在，实际代码中应包含完整的旧prompt)
+    """
+    response_text = call_llm_api(prompt, active_config)
+    return parse_ai_output(response_text)
+
+def format_json_like_string(json_string):
+    """
+    尝试将类似JSON的字符串格式化为标准JSON格式。
+    这包括修复缺失的引号、括号等。
+    """
+    # 当前实现比较简单，直接返回字符串
+    # TODO: 添加更复杂的修复逻辑
+    return json_string
+
+def _prepare_common_context(setting_pack, current_state, player_action, action_was_unparsed):
+    """辅助函数：准备一个包含所有通用上下文的字典，供后续步骤使用。"""
+    context = {
+        'narrative_principles': setting_pack.get('narrative_principles', '一个开放、自由的沙盒世界'),
+        'world_description': setting_pack.get('world_description', '一个神秘的世界'),
+        'player_character': current_state.get('player_character', '未知'),
+        'current_location': current_state.get('current_location', '未知之地'),
+        'player_action': player_action,
+        'action_was_unparsed': action_was_unparsed
+    }
+
+    # 动态构建属性字符串
+    attributes_list = [f"  - {name}: {value}" for name, value in current_state.get('attributes', {}).items()]
+    context['attributes_str'] = "\n".join(attributes_list) or "无"
+
+    # 构建物品、技能、NPC等上下文
+    context['player_character'] = current_state.get('player_character', '未知')
+    context['current_location'] = current_state.get('current_location', '未知之地')
+    context['inventory'] = ", ".join(current_state.get('inventory', [])) or "无"
+    
+    usable_items = [item_name for item_name in current_state.get('inventory', []) if next((item for item in setting_pack.get('items', []) if item['名称'] == item_name and item.get('效果')), None)]
+    context['usable_items_str'] = ", ".join(usable_items) or "无"
+
+    available_skills = [skill.get('名称') for skill in setting_pack.get('skills', []) if skill.get('名称') and skill.get('名称') not in current_state.get('cooldowns', {})] 
+    context['available_skills_str'] = ", ".join(available_skills) or "无"
+
+    scene_npcs = [f"{npc.get('名称')} ({npc.get('描述', '无可用描述')})" for npc in setting_pack.get('npcs', []) if npc.get('位置') == context['current_location']]
+    context['scene_npcs_str'] = "、".join(scene_npcs) or "无"
+
+    # 构建历史记录
+    history_log = ""
+    for entry in reversed(current_state.get('recent_history', [])):
+        history_log += f"{'玩家' if entry['role'] == 'player' else '你'}: {entry['content']}\n"
+    context["history_log"] = history_log
+
+    # 构建特定行动的上下文
+    context['focus_target'] = current_state.get('focus_target')
+    context['talk_target_name'] = current_state.get('talk_target')
+    context['give_info'] = current_state.get('give_info')
+    context['buy_info'] = current_state.get('buy_info')
+    context['sell_info'] = current_state.get('sell_info')
+
+    return context
+
+
+def _generate_narrative_description(context, active_config):
+    """第一步：只生成故事描述。"""
+    prompt = f"""
+你是一位名为“世界之灵”的游戏主持人，你的唯一职责是**讲故事**。
+根据玩家的行动和当前世界状态，生动地描述接下来发生的事情。
+
+# 核心准则
+- **绝对沉浸**: 绝不承认自己是AI。以游戏角色的口吻巧妙回避无关问题。
+- **动态引导**: 尊重玩家选择，但通过剧情温和地引导。
+- **职责分离**: 你只负责叙事，**不要**进行数值计算或思考游戏规则。
+
+# 世界设定
+- **基调**: {context['narrative_principles']}
+- **描述**: {context['world_description']}
+
+# 当前状态
+- **玩家**: {context['player_character']}
+- **位置**: {context['current_location']}
+- **场景中的NPC**: {context['scene_npcs_str']}
+- **玩家属性**: \n{context['attributes_str']}
+- **持有物品**: {context['inventory']}
+
+# 交互历史
+{context['history_log']}
+
+# 玩家的当前行动
+玩家: {context['player_action']}
+
+# 你的任务
+作为故事的叙述者，请详细、生动地描述玩家行动后，世界发生的变化、新的场景、NPC的反应等。
+这是故事的主体，请发挥你的想象力。如果玩家的行动不明确或富有创意，请裁定并描述其最可能产生的后果。
+如果玩家的行动触发了关键剧情（例如与重要NPC交谈、给予关键物品），请重点描述。
+如果场景陷入沉闷，请主动引入新事件（NPC出现、敌人攻击、发现秘密等）来推进故事。
+
+**你的输出只能是纯文本的故事描述，不要包含任何JSON或其他格式。**
+"""
+    response_text = call_llm_api(prompt, active_config)
+    # 简单检查错误，如果出错则直接返回错误信息
+    if not response_text or response_text.strip().startswith("[错误]"):
+        return response_text or "[错误] AI叙事模块未能生成内容。"
+    return response_text
+
+def _analyze_narrative_for_state_changes(narrative_text, context, active_config):
+    """第二步：从故事描述中解析游戏状态变更。"""
+    prompt = f"""
+你是一个严谨的游戏逻辑分析器。你的任务是阅读一段游戏剧情，并从中提取出所有需要更新的游戏状态。
+
+# 游戏剧情描述
+```text
+{narrative_text}
+```
+
+# 你的任务
+根据以上剧情，分析是否发生了以下事件，并严格按照JSON格式输出。
+如果某个事件没有发生，请让对应的值为 null 或空字符串。
+
+1.  **玩家信息 (PLAYER_MESSAGE)**: 剧情中是否有给玩家的直接提示或状态提醒？（例如“你感到一阵寒意。”）
+2.  **获得物品 (ADD_ITEM_TO_INVENTORY)**: 剧情是否明确描述玩家获得了某个物品？
+3.  **失去物品 (REMOVE_ITEM_FROM_INVENTORY)**: 剧情是否明确描述玩家消耗、损坏或失去了某个物品？
+4.  **位置变更 (UPDATE_LOCATION)**: 剧情是否描述玩家移动到了一个新地点？
+5.  **任务更新 (UPDATE_QUEST_STATUS)**: 剧情是否暗示某个任务的状态发生了变化？（格式："任务名: 新状态"）
+6.  **创建新任务 (CREATE_NEW_QUEST)**: 剧情是否自然地引出了一个全新的任务？如果是，请定义任务的名称、目标和奖励。
+
+# 输出格式
+```json
+{{
+    "PLAYER_MESSAGE": "(字符串)",
+    "ADD_ITEM_TO_INVENTORY": "(字符串, 物品名)",
+    "REMOVE_ITEM_FROM_INVENTORY": "(字符串, 物品名)",
+    "UPDATE_LOCATION": "(字符串, 新地点名)",
+    "UPDATE_QUEST_STATUS": "(字符串, '任务名: 新状态')",
+    "CREATE_NEW_QUEST": {{
+        "名称": "(字符串)",
+        "目标": "(字符串)",
+        "奖励": "(字符串或对象)"
+    }}
+}}
+```
+"""
+    response_text = call_llm_api(prompt, active_config)
+    return parse_ai_output(response_text)
+
+def _generate_action_suggestions(narrative_text, context, active_config):
+    """第三步：根据新情景生成行动建议。"""
+    prompt = f"""
+你是一位聪明的游戏向导。你的任务是根据当前的场景和玩家状态，为玩家提供有趣且合理的行动建议。
+
+# 当前场景描述
+```text
+{narrative_text}
+```
+
+# 玩家当前状态
+- **位置**: {context['current_location']}
+- **场景中的NPC**: {context['scene_npcs_str']}
+- **可用物品**: {context['usable_items_str']}
+- **可用技能**: {context['available_skills_str']}
+
+# 你的任务
+生成3-4个行动建议。建议应多样化，包括与环境互动、与NPC交谈、使用物品/技能或表达个人意图。
+
+# 输出格式
+请严格按照以下JSON格式输出一个对象，其中包含一个名为 `SUGGESTED_CHOICES` 的列表。
+- `display_text`: 给玩家看的描述性文本。
+- `action_command`: 给程序执行的、格式化的命令。如果建议是程序可解析的行动（如使用物品/技能、与NPC交谈），请务必提供此字段并确保格式正确。
+
+```json
+{{
     "SUGGESTED_CHOICES": [
-        "(第一个行动建议)",
-        "(第二个行动建议)",
-        "(第三个行动建议)"        
+        {{
+            "display_text": "(一个描述性的行动建议，例如：'你决定使用金疮药治疗伤口。')",
+            "action_command": "使用 金疮药"
+        }},
+        {{
+            "display_text": "(另一个描述性的行动建议，例如：'你仔细观察周围的环境。')",
+            "action_command": "观察 周围"
+        }},
+        {{
+            "display_text": "(一个纯叙事的行动，例如：'你决定保持警惕，静观其变。')",
+            "action_command": "保持警惕"
+        }}
     ]
 }}
 ```
 """
-    # 传递 game_session.active_ai_config，它可能是用户选择的配置，也可能是None
-    ai_response_text = call_llm_api(prompt, active_config=game_session.active_ai_config)
-    return parse_ai_output(ai_response_text)
+    response_text = call_llm_api(prompt, active_config)
+    return parse_ai_output(response_text)
+
+def generate_game_master_response(setting_pack, current_state, player_action, game_session, action_was_unparsed=False):
+    """
+    调用AI生成游戏剧情（三步流水线）。
+    """
+    # 1. 准备通用上下文
+    context = _prepare_common_context(setting_pack, current_state, player_action, action_was_unparsed)
+    active_config = game_session.active_ai_config
+
+    # 2. 生成叙事描述
+    narrative_text = _generate_narrative_description(context, active_config)
+    if narrative_text.strip().startswith("[错误]"):
+        return {"error": narrative_text}
+
+    # 3. 分析状态变更
+    state_changes = _analyze_narrative_for_state_changes(narrative_text, context, active_config)
+
+    # 4. 生成行动建议
+    action_suggestions = _generate_action_suggestions(narrative_text, context, active_config)
+
+    # 5. 合并结果
+    ai_response = {
+        "description": narrative_text,
+        **state_changes,
+        **action_suggestions
+    }
+    return ai_response

@@ -24,7 +24,10 @@ class World(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     creator_id = db.Column(db.Integer, db.ForeignKey('users.id', name='fk_world_creator'), nullable=False)
     name = db.Column(db.String(128), nullable=False)
-    blueprint = db.Column(JSON, nullable=False) # 存储结构化的世界设定
+    # 重构 blueprint 为 setting_pack，存储经过校验的、结构化的世界设定包
+    # setting_pack 将包含 'attribute_dimensions', 'items', 'skills', 'tasks' 等模块
+    # 它的结构由你的“通用规则框架”定义
+    setting_pack = db.Column(JSON, nullable=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     creator = db.relationship('User', backref=db.backref('created_worlds', lazy=True), foreign_keys=[creator_id])
@@ -34,7 +37,9 @@ class GameSession(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id', name='fk_session_user'), nullable=False)
     world_id = db.Column(db.Integer, db.ForeignKey('worlds.id', name='fk_session_world'), nullable=False)
-    current_state = db.Column(JSON, nullable=False) # 存储物品栏、位置、历史等
+    # current_state 的结构应与 setting_pack 中的 attribute_dimensions 对应
+    # 例如: { "attributes": { "气血": 100, "内力": 50 }, "inventory": ["金疮药"], ... }
+    current_state = db.Column(JSON, nullable=False)
     last_played = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # 关系：用户选择的AI配置

@@ -1,8 +1,12 @@
 from flask import Blueprint, request, jsonify
 from app import db
+import json
 from app.models import Setting, User, World, GameSession
-from app.services.ai_service import (analyze_world_creation_text,
-                                      generate_game_master_response)
+from app.services.ai_service import (
+                                      assist_world_creation_text,
+                                      generate_setting_pack)
+from app.services.framework_validator import validate_setting_pack
+from app.services.game_turn_service import GameTurnProcessor
 from sqlalchemy.orm.attributes import flag_modified
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 
@@ -62,44 +66,87 @@ def create_world():
     if not data:
         return jsonify({"error": "无效的输入"}), 400
 
-    # 从“创世咏唱”表单中提取数据
-    world_name = data.get('world_name') # 此界之名
-    character_description = data.get('character_description') # 吾身之形
-    world_rules = data.get('world_rules') # 万物之律
-    initial_scene = data.get('initial_scene') # 初始之景
-    narrative_principles = data.get('narrative_principles') # 叙事原则
-    # 新增：获取用户为这个世界选择的AI配置ID
+    # 接收用户的背景关键词和选择的AI模型
+    world_keywords = data.get('world_keywords') # 例如: "赛博朋克, 东方武学, 霓虹都市"
+    player_description = data.get('player_description') # 玩家对自己角色的初步描述
     active_ai_config_id = data.get('active_ai_config_id')
 
-    if not all([world_name, character_description, world_rules, initial_scene, narrative_principles]):
-        return jsonify({"error": "创建世界所需字段不完整"}), 400
+    if not world_keywords:
+        return jsonify({"error": "必须提供世界背景关键词"}), 400
 
-    # 组合自由文本字段以供AI分析
-    ai_input_blob = f"万物之律:\n{world_rules}\n\n叙事原则:\n{narrative_principles}"
-    analyzed_data = analyze_world_creation_text(ai_input_blob)
+    # 3. 调用AI生成设定包，并加入带反馈的重试机制
+    max_retries = 3
+    last_errors = []
+    raw_setting_pack = {}  # 初始化为空字典
 
-    # 构建世界蓝图
-    blueprint = {
-        "user_defined_character": character_description,
-        "user_defined_rules": world_rules,
-        "user_defined_narrative": narrative_principles,
-        "ai_premise": analyzed_data.get('world_premise'),
-        "ai_narrative_principles": analyzed_data.get('narrative_principles')
-    }
+    for attempt in range(max_retries):
+        print(f"--- 创世咏唱: 第 {attempt + 1}/{max_retries} 次尝试 ---")
+        
+        # 如果是重试，将错误信息和上次的尝试传递给AI
+        previous_attempt_json = json.dumps(raw_setting_pack, ensure_ascii=False) if raw_setting_pack else None
+        print(f"previous_attempt_json:{previous_attempt_json}")
+        
+        generated_pack = generate_setting_pack(
+            world_keywords, 
+            player_description, 
+            active_ai_config_id,
+            previous_errors=last_errors,
+            previous_attempt=previous_attempt_json
 
-    new_world = World(creator_id=current_user_id, name=world_name, blueprint=blueprint)
+        )
+
+        if "error" in generated_pack:
+            # 如果AI服务本身出错（例如API密钥错误），直接返回, 检查是否是重试
+            print(f"generated_pack_error:{generated_pack}")
+            return jsonify(generated_pack), 500
+
+
+
+
+        # 4. 程序校验设定包
+        is_valid, errors = validate_setting_pack(generated_pack)
+        if is_valid:
+            raw_setting_pack = generated_pack
+            break  # 校验通过，跳出循环
+        else:
+            print(f"--- 创世咏唱: 第 {attempt + 1} 次尝试失败，错误：{errors} ---")
+            last_errors = errors  # 记录本次错误
+            raw_setting_pack = generated_pack  # 保存本次尝试的结果，用于下次重试时的提示
+
+    else:
+        # 如果超过最大重试次数，返回错误
+        return jsonify({
+
+            "error": "AI生成的设定包未能通过校验，已达到最大重试次数",
+            "details": last_errors
+        }), 500
+
+    # 5. 校验通过，创建世界
+    if not raw_setting_pack:
+        return jsonify({"error": "AI未能生成有效的设定包"}), 500
+
+    # setting_pack 中应包含世界名称等信息
+    world_name = raw_setting_pack.get("world_name", "未命名世界")
+
+    # 6. 根据设定包初始化游戏状态
+    new_world = World(creator_id=current_user_id, name=world_name, setting_pack=raw_setting_pack)
     db.session.add(new_world)
     db.session.flush() # 刷新以获取 new_world.id 用于游戏会话
+    attributes = {}
+    # 从设定包的 "attribute_dimensions" 初始化玩家属性
+    for dim_type, dim_details in raw_setting_pack.get("attribute_dimensions", {}).items():
+        attributes[dim_details["name"]] = dim_details.get("initial_value", 100)
 
     initial_state = {
-        "player_character": character_description,
-        "current_location": initial_scene,
+        "attributes": attributes,
+        "player_character": raw_setting_pack.get("player_character_description", player_description),
+        "current_location": raw_setting_pack["initial_scene"], # 直接获取初始场景
         "inventory": [],
-        "hp": 100,  # 初始生命值
         "active_quests": {},
         "recent_history": [],
         "last_ai_response": {} # 用于存储上一次AI的完整回复
     }
+
     # 将用户选择的AI配置与新会话关联
     new_session = GameSession(
         user_id=current_user_id,
@@ -124,7 +171,6 @@ def assist_world_creation():
     AI辅助创世
     接收用户已填写的创世表单字段，调用AI进行润色、补充和填充。
     """
-    from app.services.ai_service import assist_world_creation_text
     current_user_id = int(get_jwt_identity())
 
     data = request.get_json() or {}
@@ -143,7 +189,6 @@ def assist_world_creation():
     # 如果没有提供有效的config_id，active_config将为None，
     # ai_service会回退到全局配置，并打印相应日志。
 
-    # 将用户输入和AI配置传递给AI服务函数
     assisted_data = assist_world_creation_text(
         world_name=data.get('world_name'),
         character_description=data.get('character_description'),
@@ -220,13 +265,16 @@ def get_sessions():
         print(f"获取会话时出错: {e}")
         return jsonify({'error': '获取会话失败'}), 500
 
-
 @api_bp.route('/sessions/<int:session_id>/action', methods=['POST'])
 @jwt_required()
 def take_action(session_id):
     """
     言灵交互
     提交玩家行动并获取AI的回应，同时更新游戏状态。
+    重要：
+    1. 在此函数的最开始，必须先减少所有技能冷却时间。
+    2. 在处理完玩家行动后，如果处于战斗状态，则自动处理所有NPC的回合。
+    3. 在返回响应前，必须对游戏状态进行最终校验。
     """
     current_user_id = int(get_jwt_identity())
     data = request.get_json()
@@ -235,63 +283,16 @@ def take_action(session_id):
     if not player_action:
         return jsonify({"error": "必须提供行动指令"}), 400
 
-    # 一次性获取会话并验证所有权
+    # 1. 获取会话并验证所有权
     session = GameSession.query.filter_by(id=session_id, user_id=current_user_id).first_or_404(
         description="游戏会话未找到或无权访问"
     )
 
-    # --- AI Prompt构建与调用 ---
-    # 这是关键的修改：我们将整个 session 对象传递给AI服务
-    ai_response_data = generate_game_master_response(
-        world_blueprint=session.world.blueprint,
-        current_state=session.current_state,
-        player_action=player_action,
-        game_session=session
-    )
+    # 创建 GameTurnProcessor 实例
+    turn_processor = GameTurnProcessor(session)
 
-    # 检查AI服务是否返回了错误
-    if "error" in ai_response_data:
-        return jsonify(ai_response_data), 500
-
-    # --- 状态更新逻辑 ---
-    # 注意：SQLAlchemy 2.0+ 会自动跟踪JSON字段的变化，无需手动标记修改
-    current_state = session.current_state
-
-    if item_to_add := ai_response_data.get('add_item_to_inventory'):
-        current_state['inventory'].append(item_to_add)
-
-    if item_to_remove := ai_response_data.get('remove_item_from_inventory'):
-        if item_to_remove in current_state['inventory']:
-            current_state['inventory'].remove(item_to_remove)
-
-    if quest_update_str := ai_response_data.get('update_quest_status'):
-        if ':' in quest_update_str:
-            quest_name, quest_status = quest_update_str.split(':', 1)
-            current_state['active_quests'][quest_name.strip()] = quest_status.strip()
-
-    if hp_change_str := ai_response_data.get('hp_change'):
-        try:
-            hp_change = int(hp_change_str)
-            current_state['hp'] = max(0, current_state.get('hp', 0) + hp_change)  # 确保生命值不低于0
-        except ValueError:
-            print(f"无法解析的生命值变化：{hp_change_str}")
-            # 这里可以选择记录错误或采取其他适当的操作
-    
-    # 更新最近历史记录以维持AI的上下文
-    current_state['recent_history'].insert(0, {"role": "player", "content": player_action})
-    current_state['recent_history'].insert(0, {"role": "assistant", "content": ai_response_data.get('description', '')})
-    current_state['recent_history'] = current_state['recent_history'][:10] # 保留最近5轮交互
-
-    # 存储完整的上一次AI回复，以便加载时恢复建议选项
-    current_state['last_ai_response'] = ai_response_data
-
-    # 关键修复：明确告知SQLAlchemy，current_state这个JSON字段已被修改
-    flag_modified(session, "current_state")
-
-    db.session.commit()
-
-    # 将AI的回复与完整的游戏状态一起返回给前端
-    response_payload = {**ai_response_data, "current_state": current_state}
+    # 使用 GameTurnProcessor 处理回合
+    response_payload, status_code = turn_processor.process_turn(player_action)
     return jsonify(response_payload)
 
 @api_bp.route('/sessions/<int:session_id>', methods=['DELETE'])
@@ -379,6 +380,7 @@ def delete_user_ai_config(config_id):
 def set_active_ai_for_session(session_id):
     """为指定的游戏会话设置当前使用的AI配置"""
     user_id = int(get_jwt_identity())
+
     session = GameSession.query.filter_by(id=session_id, user_id=user_id).first_or_404()
     data = request.get_json()
     config_id = data.get('config_id') # 允许为 null

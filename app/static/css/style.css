@@ -15,6 +15,42 @@
     --font-sans: 'Noto Sans SC', sans-serif;
 }
 
+/* 未来科技风格的CSS */
+#login-container {
+    background-color: rgba(0, 0, 0, 0.8);
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 0 20px rgba(0, 255, 65, 0.5); /* 绿色光晕 */
+    text-align: center;
+}
+
+input[type="text"],
+input[type="password"] {
+    margin: 10px 0;
+    padding: 10px;
+    border: 1px solid #00FF41;
+    background-color: #222;
+    color: #fff;
+    border-radius: 5px;
+}
+
+.styled-button {
+    background-color: #00FF41;
+    color: #000;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.styled-button:hover {
+    background-color: #00A330; /* 稍微暗一点的绿色 */
+}
+
+/* 现有的CSS样式可以继续放在这里 */
+
+
 body {
     font-family: var(--font-sans);
     background-color: var(--bg-color);
@@ -25,7 +61,7 @@ body {
     justify-content: center;
     align-items: center;
     min-height: 100vh;
-    font-size: 16px;
+    font-size: 15px; /* 移动端优先：使用稍小的基础字号 */
 }
 
 .container {
@@ -33,7 +69,7 @@ body {
     max-width: 1400px;
     background-color: var(--container-bg);
     border-radius: 8px;
-    padding: 30px 40px;
+    padding: 20px; /* 移动端优先：减小内边距 */
     box-shadow: 0 10px 30px rgba(0,0,0,0.3);
     border: 1px solid var(--border-color);
 }
@@ -64,6 +100,49 @@ header .subtitle {
     animation: fadeIn 0.5s;
 }
 
+.skeleton {
+    background: linear-gradient(90deg, #253045, #35425e, #253045);
+    background-size: 200% 200%;
+    animation: skeleton-loading 1.5s linear infinite;
+    color: transparent !important; /* 确保文字透明 */
+    opacity: 0.7;
+    cursor: not-allowed; /* 改变鼠标样式 */
+    pointer-events: none; /* 阻止点击事件 */
+}
+
+.log-entry.skeleton {
+    opacity: 1;
+    cursor: default;
+    pointer-events: none;
+    /* 移除背景和颜色，让子元素来处理 */
+    background: none;
+    color: transparent !important;
+}
+
+.log-entry.skeleton span {
+    display: block;
+    height: 1em;
+    margin-bottom: 0.6em;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #253045, #35425e, #253045);
+    background-size: 200% 200%;
+    animation: skeleton-loading 1.5s linear infinite;
+    opacity: 0.7;
+}
+
+.log-entry.skeleton span:nth-child(2) { width: 95%; }
+.log-entry.skeleton span:nth-child(3) { width: 80%; }
+
+@keyframes skeleton-loading {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; }
@@ -79,7 +158,7 @@ input, textarea, button, select {
     border: 1px solid var(--border-color);
     border-radius: 4px;
     box-sizing: border-box;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: border-color 0.2s, box-shadow 0.2s, opacity 0.4s ease-in-out;
 }
 
 input:focus, textarea:focus, select:focus {
@@ -88,7 +167,7 @@ input:focus, textarea:focus, select:focus {
     box-shadow: 0 0 0 3px rgba(255, 201, 113, 0.2);
 }
 
-button {
+.styled-button {
     background-color: var(--primary-color);
     color: #1a1a1a;
     font-weight: 500;
@@ -97,11 +176,11 @@ button {
     transition: background-color 0.2s, transform 0.1s;
 }
 
-button:hover {
+.styled-button:hover {
     background-color: var(--primary-hover-color);
 }
 
-button:active {
+.styled-button:active {
     transform: translateY(1px);
 }
 
@@ -125,6 +204,14 @@ button:active {
 
 .auth-toggle-link a:hover {
     text-decoration: underline;
+}
+/* --- 表单样式 --- */
+#login-form, #register-form, #create-world-btn, #create-world-btn-container {
+    flex-direction: column;
+    width: max-content;
+    align-content: center;
+    place-self: center;
+    justify-self: center;
 }
 
 /* --- 主菜单 --- */
@@ -170,12 +257,11 @@ button:active {
     min-height: 80px;
 }
 
-button.secondary {
+.styled-button.secondary {
     background-color: #4a5568;
     color: var(--text-color);
 }
-
-button.secondary:hover {
+.styled-button.secondary:hover {
     background-color: #616e82;
 }
 
@@ -203,6 +289,7 @@ button.secondary:hover {
 
 .game-container {
     display: flex;
+    flex-direction: column; /* 移动端优先: 垂直堆叠 */
     gap: 20px;
     align-items: flex-start;
 }
@@ -211,7 +298,8 @@ button.secondary:hover {
     flex: 1;
     display: flex;
     flex-direction: column;
-    height: 70vh;
+    height: 75vh; /* 调整视口高度 */
+    width: 100%; /* 在列布局中确保占满宽度 */
 }
 
 #game-log {
@@ -241,11 +329,12 @@ button.secondary:hover {
 
 /* --- 游戏状态侧边栏 --- */
 #game-sidebar {
-    flex: 0 0 250px;
+    width: 100%; /* 移动端优先: 占满宽度 */
     background-color: rgba(255, 255, 255, 0.03);
     padding: 15px;
     border-radius: 8px;
     border: 1px solid var(--border-color);
+    order: -1; /* 在移动端将侧边栏显示在主面板之上 */
 }
 
 #game-sidebar h3 {
@@ -278,6 +367,7 @@ button.secondary:hover {
     border-radius: 4px;
     margin-bottom: 5px;
     font-size: 0.9em;
+    word-break: break-word; /* 避免长文本溢出 */
 }
 
 /* --- 纪事操作按钮 --- */
@@ -287,11 +377,11 @@ button.secondary:hover {
     gap: 10px;
 }
 
-.session-item button {
+.session-item .styled-button {
     width: auto;
     margin: 0;
     font-weight: normal;
-    font-size: 0.9em;
+    font-size: 0.9em;    
     padding: 8px 12px;
     background-color: #4a5568;
 }
@@ -398,4 +488,85 @@ button.secondary:hover {
 .close-btn:focus {
     color: var(--text-color);
     text-decoration: none;
+}
+
+/* 优化sidebar 列表显示 */
+#game-sidebar ul li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#game-sidebar ul li strong {
+    margin-right: 5px;
+}
+
+/* =================================
+   页脚样式
+   ================================= */
+footer {
+    text-align: center;
+    padding: 2rem 1rem;
+    margin-top: 4rem;
+    font-size: 0.9em;
+    color: #8a9199; /* 使用柔和的灰色调，与背景协调 */
+    border-top: 1px solid #3a3f44; /* 一条细微的分割线，适合深色主题 */
+}
+
+footer p {
+    margin: 0.5em 0;
+}
+
+footer a {
+    color: #cdd3da; /* 使用比正文稍亮的颜色以突出链接 */
+    text-decoration: none; /* 移除默认的下划线 */
+    padding: 0.2em 0.4em;
+    border-radius: 4px;
+    transition: color 0.3s ease, background-color 0.3s ease; /* 平滑过渡效果 */
+}
+
+footer a:hover,
+footer a:focus {
+    color: #ffffff; /* 鼠标悬停时变为更明亮的颜色 */
+    background-color: #3a3f44; /* 添加一个微妙的背景色以增强反馈 */
+    text-decoration: none; /* 悬停时也不需要下划线 */
+    outline: none;
+}
+
+
+/* --- 响应式设计 --- */
+
+/* 平板与桌面端 */
+@media (min-width: 992px) {
+    body {
+        font-size: 16px; /* 恢复桌面端基础字号 */
+    }
+
+    .container {
+        padding: 30px 40px; /* 恢复桌面端内边距 */
+    }
+
+    .game-container {
+        flex-direction: row; /* 切换为水平布局 */
+    }
+
+    #game-sidebar {
+        flex: 0 0 280px; /* 为侧边栏设置固定宽度 */
+        order: 0; /* 恢复默认顺序 */
+        max-height: 75vh; /* 允许侧边栏独立滚动 */
+        overflow-y: auto;
+    }
+
+    .game-main-panel {
+        height: 75vh;
+    }
+}
+
+/* 针对特别窄的移动设备 */
+@media (max-width: 480px) {
+    .game-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
 }
