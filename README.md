@@ -8,7 +8,7 @@
 
 ![言灵登录界面预览](./preview1.jpeg)
 
-![言灵游戏界面预览](./preview1.jpeg)
+![言灵游戏界面预览](./preview2.jpeg)
 
 ---
 
