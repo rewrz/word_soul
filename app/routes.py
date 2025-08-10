@@ -74,52 +74,17 @@ def create_world():
     if not world_keywords:
         return jsonify({"error": "必须提供世界背景关键词"}), 400
 
-    # 3. 调用AI生成设定包，并加入带反馈的重试机制
-    max_retries = 3
-    last_errors = []
-    raw_setting_pack = {}  # 初始化为空字典
+    # 3. 调用AI生成设定包。
+    # generate_setting_pack 函数内部已经包含了分步生成、校验和重试逻辑。
+    raw_setting_pack = generate_setting_pack(
+        world_keywords,
+        player_description,
+        active_ai_config_id
+    )
 
-    for attempt in range(max_retries):
-        print(f"--- 创世咏唱: 第 {attempt + 1}/{max_retries} 次尝试 ---")
-        
-        # 如果是重试，将错误信息和上次的尝试传递给AI
-        previous_attempt_json = json.dumps(raw_setting_pack, ensure_ascii=False) if raw_setting_pack else None
-        print(f"previous_attempt_json:{previous_attempt_json}")
-        
-        generated_pack = generate_setting_pack(
-            world_keywords, 
-            player_description, 
-            active_ai_config_id,
-            previous_errors=last_errors,
-            previous_attempt=previous_attempt_json
-
-        )
-
-        if "error" in generated_pack:
-            # 如果AI服务本身出错（例如API密钥错误），直接返回, 检查是否是重试
-            print(f"generated_pack_error:{generated_pack}")
-            return jsonify(generated_pack), 500
-
-
-
-
-        # 4. 程序校验设定包
-        is_valid, errors = validate_setting_pack(generated_pack)
-        if is_valid:
-            raw_setting_pack = generated_pack
-            break  # 校验通过，跳出循环
-        else:
-            print(f"--- 创世咏唱: 第 {attempt + 1} 次尝试失败，错误：{errors} ---")
-            last_errors = errors  # 记录本次错误
-            raw_setting_pack = generated_pack  # 保存本次尝试的结果，用于下次重试时的提示
-
-    else:
-        # 如果超过最大重试次数，返回错误
-        return jsonify({
-
-            "error": "AI生成的设定包未能通过校验，已达到最大重试次数",
-            "details": last_errors
-        }), 500
+    # 4. 检查生成结果。如果包含error，说明内部重试后依然失败。
+    if "error" in raw_setting_pack:
+        return jsonify(raw_setting_pack), 500
 
     # 5. 校验通过，创建世界
     if not raw_setting_pack:
@@ -293,7 +258,18 @@ def take_action(session_id):
 
     # 使用 GameTurnProcessor 处理回合
     response_payload, status_code = turn_processor.process_turn(player_action)
-    return jsonify(response_payload)
+
+    # --- 关键修复 ---
+    # 如果回合处理成功（HTTP状态码小于400），则将更新后的状态保存到数据库。
+    # 如果不这样做，所有游戏进度都会在请求结束后丢失。
+    if status_code < 400:
+        # 告知SQLAlchemy，session.current_state这个JSON字段已被修改。
+        # 如果不标记，SQLAlchemy可能不会检测到对字典内部值的更改。
+        flag_modified(session, "current_state")
+        db.session.commit()
+
+
+    return jsonify(response_payload), status_code
 
 @api_bp.route('/sessions/<int:session_id>', methods=['DELETE'])
 @jwt_required()

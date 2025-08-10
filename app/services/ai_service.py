@@ -48,7 +48,7 @@ def parse_ai_output(text):
 
     return data
 
-def _call_openai_api(prompt_text, api_key, base_url=None, model_name="gpt-4o-mini", max_retries=3):
+def _call_openai_api(prompt_text, api_key, base_url=None, model_name="gpt-4o-mini", max_retries=3, history=None):
 
     """调用OpenAI或兼容OpenAI的API（如Ollama）"""
     if base_url:
@@ -63,10 +63,14 @@ def _call_openai_api(prompt_text, api_key, base_url=None, model_name="gpt-4o-min
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
     }
+    
+    # 核心修复：构建正确的消息历史
+    messages = []
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": prompt_text})
     payload = {
-        "model": model_name or "gpt-4o-mini",
-        "messages": [{"role": "user", "content": prompt_text}],
-        "temperature": 0.7,
+        "model": model_name or "gpt-4o-mini", "messages": messages, "temperature": 0.7,
     }
 
     for attempt in range(max_retries):
@@ -104,36 +108,55 @@ def _call_openai_api(prompt_text, api_key, base_url=None, model_name="gpt-4o-min
 
     return "[错误] AI服务在所有重试后均未能成功调用。"
 
-def _call_gemini_api(prompt_text, api_key, model_name="gemini-1.5-flash"):
+def _call_gemini_api(prompt_text, api_key, model_name="gemini-1.5-flash", max_retries=3, history=None):
     """调用Google Gemini API"""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name or 'gemini-1.5-flash'}:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
+    
+    # 核心修复：为Gemini构建正确的contents历史
+    contents = []
+    if history:
+        # Gemini的role是'user'和'model'
+        for entry in history:
+            role = 'model' if entry['role'] == 'assistant' else 'user'
+            contents.append({"role": role, "parts": [{"text": entry['content']}]})
+    contents.append({"role": "user", "parts": [{"text": prompt_text}]})
+
     payload = {
-        "contents": [{"parts": [{"text": prompt_text}]}]
+        "contents": contents
     }
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=120)
-        response.raise_for_status()
-        data = response.json()
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=120)
+            response.raise_for_status()
+            data = response.json()
 
-        # 增加健壮性：检查Gemini特有的错误格式
-        if not data.get('candidates'):
-            error_info = data.get('promptFeedback', '未知错误')
-            print(f"Gemini API 返回错误: {error_info}")
-            return f"[错误] AI服务返回错误: {error_info}"
+            # 增加健壮性：检查Gemini特有的错误格式
+            if not data.get('candidates'):
+                error_info = data.get('promptFeedback', '未知错误')
+                logger.error(f"Gemini API 返回错误: {error_info}")
+                return f"[错误] AI服务返回错误: {error_info}"
 
-        return data['candidates'][0]['content']['parts'][0]['text']
-    except requests.exceptions.RequestException as e:
-        logger.error(f"调用Gemini API时出错: {e}")
-        return "[错误] AI服务暂时无法连接。"
-    except (KeyError, IndexError) as e:
-        logger.exception(f"解析Gemini API响应时出错: {e}。收到的原始数据: {data}")
-        return "[错误] AI服务返回了意料之外的数据格式。"
-    except json.JSONDecodeError:
-        logger.error(f"解析Gemini API响应时出错: 无法解码JSON。收到的原始文本: {response.text}")
-        return "[错误] AI服务返回了非JSON格式的响应。"
+            return data['candidates'][0]['content']['parts'][0]['text']
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"调用Gemini API时出错: {e}")
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 5
+                logger.warning(f"正在重试... ({attempt + 1}/{max_retries}). 等待 {wait_time} 秒.")
+                time.sleep(wait_time)
+                continue
+            else:
+                logger.error(f"调用Gemini API在 {max_retries} 次重试后仍然失败。")
+                return "[错误] AI服务暂时无法连接。"
+        except (KeyError, IndexError) as e:
+            logger.exception(f"解析Gemini API响应时出错: {e}。收到的原始数据: {data}")
+            return "[错误] AI服务返回了意料之外的数据格式。"
+        except json.JSONDecodeError:
+            logger.error(f"解析Gemini API响应时出错: 无法解码JSON。收到的原始文本: {response.text}")
+            return "[错误] AI服务返回了非JSON格式的响应。"
+    return "[错误] AI服务在所有重试后均未能成功调用。"
 
-def _call_claude_api(prompt_text, api_key, model_name="claude-3-haiku-20240307"):
+def _call_claude_api(prompt_text, api_key, model_name="claude-3-haiku-20240307", max_retries=3, history=None):
     """调用Anthropic Claude API"""
     url = "https://api.anthropic.com/v1/messages"
     headers = {
@@ -141,34 +164,47 @@ def _call_claude_api(prompt_text, api_key, model_name="claude-3-haiku-20240307")
         "anthropic-version": "2023-06-01",
         "content-type": "application/json"
     }
+    
+    # 核心修复：构建正确的消息历史
+    messages = []
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": prompt_text})
+
     payload = {
         "model": model_name or "claude-3-haiku-20240307",
-        "max_tokens": 2048,
-        "messages": [{"role": "user", "content": prompt_text}]
+        "max_tokens": 2048, "messages": messages
     }
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=120)
-        response.raise_for_status()
-        data = response.json()
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=120)
+            response.raise_for_status()
+            data = response.json()
 
-        # 增加健壮性：检查Claude特有的错误格式
-        if data.get('type') == 'error':
-            error_message = data.get('error', {}).get('message', str(data.get('error')))
-            print(f"Claude API 返回错误: {error_message}")
-            return f"[错误] AI服务返回错误: {error_message}"
+            # 增加健壮性：检查Claude特有的错误格式
+            if data.get('type') == 'error':
+                error_message = data.get('error', {}).get('message', str(data.get('error')))
+                logger.error(f"Claude API 返回错误: {error_message}")
+                return f"[错误] AI服务返回错误: {error_message}"
 
-        return data['content'][0]['text']
-    except requests.exceptions.RequestException as e:
-        logger.error(f"调用Claude API时出错: {e}")
-        return "[错误] AI服务暂时无法连接。"
-    except (KeyError, IndexError) as e:
-        logger.exception(f"解析Claude API响应时出错: {e}。收到的原始数据: {data}")
-        return "[错误] AI服务返回了意料之外的数据格式。"
-    except json.JSONDecodeError:
-        print(f"解析Claude API响应时出错: 无法解码JSON。收到的原始文本: {response.text}")
-        return "[错误] AI服务返回了非JSON格式的响应。"
+            return data['content'][0]['text']
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"调用Claude API时出错: {e}")
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 5
+                logger.warning(f"正在重试... ({attempt + 1}/{max_retries}). 等待 {wait_time} 秒.")
+                time.sleep(wait_time)
+                continue
+            else:
+                logger.error(f"调用Claude API在 {max_retries} 次重试后仍然失败。")
+                return "[错误] AI服务暂时无法连接。"
+        except (KeyError, IndexError, json.JSONDecodeError) as e:
+            logger.error(f"解析Claude API响应时出错: {e}", exc_info=True)
+            return "[错误] AI服务返回了意料之外的数据格式或无效的JSON。"
+    return "[错误] AI服务在所有重试后均未能成功调用。"
 
-def call_llm_api(prompt_text, active_config=None):
+
+def call_llm_api(prompt_text, active_config=None, history=None):
 
     """
     AI调用分发器。
@@ -193,15 +229,15 @@ def call_llm_api(prompt_text, active_config=None):
         if not api_key: return "[错误] 缺少 API Key。"
         if provider == 'local_openai' and not base_url:
             return "[错误] 使用本地模型时，必须配置基础URL (base_url)。"
-        return _call_openai_api(prompt_text, api_key, base_url, model_name or "gpt-4o-mini")
+        return _call_openai_api(prompt_text, api_key, base_url, model_name or "gpt-4o-mini", history=history)
 
     elif provider == 'gemini':
         if not api_key: return "[错误] 缺少 Gemini API Key。"
-        return _call_gemini_api(prompt_text, api_key, model_name)
+        return _call_gemini_api(prompt_text, api_key, model_name, history=history)
 
     elif provider == 'claude':
         if not api_key: return "[错误] 缺少 Claude API Key。"
-        return _call_claude_api(prompt_text, api_key, model_name)
+        return _call_claude_api(prompt_text, api_key, model_name, history=history)
 
     else:
         return f"[错误] 不支持的AI提供商: {provider}。"
@@ -244,11 +280,11 @@ def assist_world_creation_text(world_name, character_description, world_rules, i
 
 ```json
 {{
-    "WORLD_NAME": "(生成一个独特且富有吸引力的世界名称)",
-    "CHARACTER_DESCRIPTION": "(描述一个引人入胜的玩家角色背景和形象)",
-    "WORLD_RULES": "(一个**单一的字符串**，详细阐述这个世界的核心规则、物理法则、魔法系统、社会结构等，使其丰满可信)",
-    "INITIAL_SCENE": "(描绘一个充满悬念和探索可能性的开场画面)",
-    "NARRATIVE_PRINCIPLES": "(设定一个清晰的故事基调，例如：黑暗奇幻、赛博朋克、英雄史诗、轻松幽默等)"
+    "WORLD_NAME": "(生成一个独特且富有吸引力的故事名称，要足够吸睛和劲爆，一般是故事的核心升华，使用浮夸和猎奇的手法引起玩家的好奇心)",
+    "CHARACTER_DESCRIPTION": "(关键角色的具体描述，包括主要男女主角（如有）、主要配角（如有）、主要反派角色（如有）等影响整个故事发展的关键角色要点介绍，禁止使用神秘的、古老的、未知的等模糊描述)",
+    "WORLD_RULES": "(一个**单一的字符串**，概括这个世界主要讲了一个什么故事，采用线性的叙事结构，融合主线、支线、伏笔\暗线、感情线的完整线性故事发展，至少要有一个惊天的大反转，例如玄幻世界里一个废物主角逆袭成为人人爱慕的宇宙帝王等，根据世界观背景类型以及故事内容所需而定，例如力量体系或技能体系或装备体系或门派体系等方面，力量等级要清晰，不同等级的差距和特点需明确描述。主角所使用的技能要罗列并注解其威力和影响，装备的获取方式、效果等也要详细设定。比如在仙侠世界中，设定从练气到飞升的多个力量等级，每个等级的能力和突破条件都不同)",
+    "INITIAL_SCENE": "(描绘一个具体的开场画面，也是主角的初始场景，至少要描述该场景的背景、关键事件、关键角色（若有）、关键物品（若有）、关键任务（若有）等。)",
+    "NARRATIVE_PRINCIPLES": "(设定一个清晰的故事基调，例如：现代都市、架空奇幻、未来科幻、末世、言情、修仙、玄幻、魔法奇幻、轻小说等)"
 }}
 ```
 """
@@ -303,7 +339,7 @@ def _generate_world_meta(world_keywords, player_description, active_config, prev
 
 # 你的任务
 生成一个JSON对象，包含以下字段：
-- `world_name`: (string) 世界的名称。
+- `world_name`: (string) 这个世界的故事名称。
 - `world_description`: (string) 对这个世界的整体风格、背景和核心冲突的简要描述。
 - `player_character_description`: (string) 基于用户描述，润色后的玩家角色背景故事和初始状态。
 - `initial_scene`: (string) 游戏开始时的场景描述，需要引人入胜，并提供明确的起点。
@@ -402,7 +438,7 @@ def _generate_content_modules(world_keywords, player_description, setting_pack, 
 3.  **商人与敌人**: 你必须创建至少一个商人NPC，并为其 `售卖物品` 列表添加一些你在物品库中定义的、有价格的物品。同时，必须创建一个可供战斗的敌对NPC (`is_hostile: true`)。
 
 # 你的任务
-生成一个JSON对象，包含 `items`, `skills`, `npcs`, `tasks` 四个模块。
+按照设定，生成一个符合设定逻辑的JSON对象，包含 `items`, `skills`, `npcs`, `tasks` 四个模块，例如：
 
 ```json
 {{
@@ -472,21 +508,14 @@ def _validate_meta(data):
         elif not isinstance(data[key], str) or not data[key].strip():
             errors.append(f"元数据键 '{key}' 的值必须是一个非空的字符串。")
     return not errors, errors
-
-def generate_setting_pack(world_keywords, player_description, active_ai_config_id, previous_errors=None, previous_attempt=None):
+def generate_setting_pack(world_keywords, player_description, active_ai_config_id):
     """
     调用大模型，根据用户关键词生成结构化的“动态设定包”。
-    新增了 previous_errors 和 previous_attempt 参数，用于实现带反馈的重试。
     """
     # 根据传入的ID从数据库获取具体的AI配置
     active_config = None
     if active_ai_config_id:
         active_config = Setting.query.get(active_ai_config_id)
-
-    # 如果是由外部重试循环调用的，则使用旧的、一体化的反馈模式作为最终保障
-    if previous_errors and previous_attempt:
-        print("--- 检测到错误，进入带反馈的重试模式 ---")
-        return _generate_with_feedback(world_keywords, player_description, active_config, previous_errors, previous_attempt)
 
     # --- 分步生成与独立校验/重试 ---
     max_retries_per_step = 3
@@ -549,35 +578,6 @@ def generate_setting_pack(world_keywords, player_description, active_ai_config_i
 
     return setting_pack
 
-def _generate_with_feedback(world_keywords, player_description, active_config, previous_errors, previous_attempt):
-    """
-    当验证失败时，调用此函数，将错误信息和上次的尝试一起发给AI进行修正。
-    这是旧的“一体化”生成逻辑，仅用于重试。
-    """
-    # ... 此处保留旧的、包含 correction_prompt_part 的巨大 prompt ...
-    # ... 为了简洁，这里省略了旧prompt的完整内容，但它应该被保留在这里 ...
-    # ... 它的作用是当分步生成失败后，给AI一个完整的上下文去修复 ...
-    error_string = "\n- ".join(previous_errors)
-    print(f"重试报错:{previous_errors}")
-    prompt = f"""
-    # 上次尝试失败 (Previous Attempt Failed)
-    你上次生成的JSON未能通过程序校验。这是你上次的输出和具体的错误列表。
-    请仔细阅读错误，并修正它们。**不要重复之前的错误**。
-
-    ### 上次的输出 (Your Previous Invalid JSON)
-    ```json
-    {previous_attempt}
-    ```
-
-    ### 错误列表 (Error List)
-    - {error_string}
-    
-    请根据以上错误，重新生成一个完全正确的、完整的JSON。
-    (此处省略了完整的框架定义，因为它在上面的主逻辑中已经存在，实际代码中应包含完整的旧prompt)
-    """
-    response_text = call_llm_api(prompt, active_config)
-    return parse_ai_output(response_text)
-
 def format_json_like_string(json_string):
     """
     尝试将类似JSON的字符串格式化为标准JSON格式。
@@ -592,7 +592,7 @@ def _prepare_common_context(setting_pack, current_state, player_action, action_w
     context = {
         'narrative_principles': setting_pack.get('narrative_principles', '一个开放、自由的沙盒世界'),
         'world_description': setting_pack.get('world_description', '一个神秘的世界'),
-        'player_character': current_state.get('player_character', '未知'),
+        'player_character_description': current_state.get('player_character', '未知'),
         'current_location': current_state.get('current_location', '未知之地'),
         'player_action': player_action,
         'action_was_unparsed': action_was_unparsed
@@ -603,8 +603,6 @@ def _prepare_common_context(setting_pack, current_state, player_action, action_w
     context['attributes_str'] = "\n".join(attributes_list) or "无"
 
     # 构建物品、技能、NPC等上下文
-    context['player_character'] = current_state.get('player_character', '未知')
-    context['current_location'] = current_state.get('current_location', '未知之地')
     context['inventory'] = ", ".join(current_state.get('inventory', [])) or "无"
     
     usable_items = [item_name for item_name in current_state.get('inventory', []) if next((item for item in setting_pack.get('items', []) if item['名称'] == item_name and item.get('效果')), None)]
@@ -616,11 +614,17 @@ def _prepare_common_context(setting_pack, current_state, player_action, action_w
     scene_npcs = [f"{npc.get('名称')} ({npc.get('描述', '无可用描述')})" for npc in setting_pack.get('npcs', []) if npc.get('位置') == context['current_location']]
     context['scene_npcs_str'] = "、".join(scene_npcs) or "无"
 
-    # 构建历史记录
-    history_log = ""
-    for entry in reversed(current_state.get('recent_history', [])):
-        history_log += f"{'玩家' if entry['role'] == 'player' else '你'}: {entry['content']}\n"
-    context["history_log"] = history_log
+    # 核心修复：准备结构化的历史记录，并将其倒序以符合API的时间顺序要求。
+    # 同时，将内部使用的 'player' 角色映射为AI API可接受的 'user' 角色。
+    raw_history = current_state.get('recent_history', [])
+    
+    # API需要按时间顺序排列的历史记录 (旧->新)，所以我们先反转。
+    # 同时使用列表推导式来映射角色，确保发送给API的角色是 'user' 或 'assistant'。
+    api_history = [
+        {'role': 'user' if entry.get('role') == 'player' else entry.get('role'), 'content': entry.get('content')}
+        for entry in reversed(raw_history)
+    ]
+    context['history_for_api'] = api_history
 
     # 构建特定行动的上下文
     context['focus_target'] = current_state.get('focus_target')
@@ -648,27 +652,24 @@ def _generate_narrative_description(context, active_config):
 - **描述**: {context['world_description']}
 
 # 当前状态
-- **玩家**: {context['player_character']}
+- **玩家**: {context['player_character_description']}
 - **位置**: {context['current_location']}
 - **场景中的NPC**: {context['scene_npcs_str']}
 - **玩家属性**: \n{context['attributes_str']}
 - **持有物品**: {context['inventory']}
 
-# 交互历史
-{context['history_log']}
-
 # 玩家的当前行动
 玩家: {context['player_action']}
 
 # 你的任务
-作为故事的叙述者，请详细、生动地描述玩家行动后，世界发生的变化、新的场景、NPC的反应等。
+作为故事的叙述者，请详略得当地描述玩家行动后的故事情节，例如事件发展变化、新的场景、NPC的反应等。
 这是故事的主体，请发挥你的想象力。如果玩家的行动不明确或富有创意，请裁定并描述其最可能产生的后果。
 如果玩家的行动触发了关键剧情（例如与重要NPC交谈、给予关键物品），请重点描述。
-如果场景陷入沉闷，请主动引入新事件（NPC出现、敌人攻击、发现秘密等）来推进故事。
+如果场景陷入沉闷，请主动引入新事件（例如：NPC出现、敌人攻击、有新发现等）来推进故事。
 
-**你的输出只能是纯文本的故事描述，不要包含任何JSON或其他格式。**
+**你的输出只能是纯文本的故事情节和描述，就像在写网络小说一样，请勿输出任何其他内容。**
 """
-    response_text = call_llm_api(prompt, active_config)
+    response_text = call_llm_api(prompt, active_config, history=context['history_for_api'])
     # 简单检查错误，如果出错则直接返回错误信息
     if not response_text or response_text.strip().startswith("[错误]"):
         return response_text or "[错误] AI叙事模块未能生成内容。"
@@ -731,12 +732,12 @@ def _generate_action_suggestions(narrative_text, context, active_config):
 - **可用技能**: {context['available_skills_str']}
 
 # 你的任务
-生成3-4个行动建议。建议应多样化，包括与环境互动、与NPC交谈、使用物品/技能或表达个人意图。
+生成2-4个多样化且符合逻辑的行动建议（例如：与环境互动、与NPC交谈、使用物品/技能或表达个人意图等）。
 
 # 输出格式
 请严格按照以下JSON格式输出一个对象，其中包含一个名为 `SUGGESTED_CHOICES` 的列表。
 - `display_text`: 给玩家看的描述性文本。
-- `action_command`: 给程序执行的、格式化的命令。如果建议是程序可解析的行动（如使用物品/技能、与NPC交谈），请务必提供此字段并确保格式正确。
+- `action_command`: 给程序执行的、格式化的命令。如果建议是程序可解析的行动（如使用物品/技能、与NPC交谈等），请务必提供此字段并确保格式正确。
 
 ```json
 {{

@@ -147,11 +147,14 @@ class GameTurnProcessor:
     def _update_history(self, player_action, ai_response_data):
         """更新最近历史记录和上一次AI的回复"""
         def sanitize_text(text):
+            """一个简单的净化函数，防止基本的HTML注入。
+            对于生产环境，建议使用更强大的库，如 Bleach。"""
             return text.replace("<", "&lt;").replace(">", "&gt;")
 
         sanitized_action = sanitize_text(player_action)
+        sanitized_description = sanitize_text(ai_response_data.get('description', ''))
         self.current_state['recent_history'].insert(0, {"role": "player", "content": sanitized_action})
-        self.current_state['recent_history'].insert(0, {"role": "assistant", "content": ai_response_data.get('description', '')})
+        self.current_state['recent_history'].insert(0, {"role": "assistant", "content": sanitized_description})
         self.current_state['recent_history'] = self.current_state['recent_history'][:10]
         self.current_state['last_ai_response'] = ai_response_data
 

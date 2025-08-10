@@ -347,7 +347,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (response && response.ok) {
             const sessionData = await response.json();
-            startGame(sessionData); // 将完整的存档数据传递给开始游戏的函数
+            // 增加详细日志，便于调试后端返回的数据结构
+            console.log("从后端收到的完整存档数据:", JSON.stringify(sessionData, null, 2));
+            startGame(sessionData); // 将存档数据和操作意图一起传递
         } else {
             alert('加载纪事失败。');
             console.error("无法加载会话:", response);
@@ -356,39 +358,51 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
     function startGame(sessionData) { // 负责根据数据渲染游戏界面
-        console.log("正在开始游戏，读取到的存档数据:", sessionData);
+        console.log("startGame 函数接收到的数据:", sessionData);
+        const currentState = sessionData.current_state;
+
+        // 关键检查：确认存档数据是否有效。一个有效的存档必须包含 current_state。
+        // 如果缺少，说明存档可能已损坏或后端未正确返回数据，这是导致问题的主要原因。
+        if (!currentState) {
+            console.error("存档数据无效或已损坏：缺少 'current_state'。无法继续游戏。", sessionData);
+            alert("加载存档失败：存档数据似乎已损坏或不完整，无法从上次的进度继续。请检查后端服务是否正确返回了会话状态。");
+            return; // 终止函数执行，防止游戏“重新开始”
+        }
+
         state.currentSessionId = sessionData.session_id;
         state.currentWorldName = sessionData.world_name;
 
         gameWorldName.textContent = state.currentWorldName;
         gameLog.innerHTML = '';
         actionInput.value = '';
-
-        // 游戏开始时，渲染一次玩家状态
-        const currentState = sessionData.current_state || {};
         renderPlayerStatus(currentState);
 
         showView('game-view');
 
-        // 恢复游戏日志
         if (currentState.recent_history && currentState.recent_history.length > 0) {
+            // 如果历史记录不为空，说明是正在进行的游戏，恢复所有状态
+            console.log("检测到有效的游戏历史，正在恢复游戏进度...");
             // 历史记录是倒序存的（最新在前），所以渲染时要反转回来
             [...currentState.recent_history].reverse().forEach(entry => {
                 appendLog(entry.content, entry.role);
             });
-        }
 
-        // 只有在历史记录完全不存在或为空时，才视为新游戏并“环顾四周”
-        if (!currentState.recent_history || currentState.recent_history.length === 0) {
-            console.log("这是一个新游戏或空存档，正在自动'环顾四周'。");
-            handleActionSubmit(null, "环顾四周");
-        } else {
             // 如果是加载的旧游戏，恢复上次的建议选项
             console.log("已成功加载存档，正在恢复建议选项。");
             const lastAiResponse = currentState.last_ai_response || {};
             renderGameSuggestions(lastAiResponse.suggested_choices);
             // 确保日志滚动到底部
             gameLog.scrollTop = gameLog.scrollHeight;
+        } else {
+            // 如果历史记录为空，则这是一个新游戏或从未开始过的游戏。
+            // 1. 显示创世时生成的初始场景描述。
+            console.log("历史记录为空，开始新游戏流程...");
+            if (currentState.current_location) {
+                appendLog(currentState.current_location, 'ai');
+            }
+            // 2. 自动执行“环顾四周”来获取第一组互动选项，正式开始游戏。
+            console.log("自动执行 '环顾四周' 以获取初始选项。");
+            handleActionSubmit(null, "环顾四周");
         }
     }
 

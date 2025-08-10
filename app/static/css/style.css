@@ -66,7 +66,7 @@ body {
 
 .container {
     width: 100%;
-    max-width: 1400px;
+    max-width: 1600px; /* 增加容器最大宽度，提供更宽敞的布局 */
     background-color: var(--container-bg);
     border-radius: 8px;
     padding: 20px; /* 移动端优先：减小内边距 */
@@ -298,7 +298,7 @@ input:focus, textarea:focus, select:focus {
     flex: 1;
     display: flex;
     flex-direction: column;
-    height: 75vh; /* 调整视口高度 */
+    height: 80vh; /* 增加主面板高度 */
     width: 100%; /* 在列布局中确保占满宽度 */
 }
 
@@ -307,18 +307,34 @@ input:focus, textarea:focus, select:focus {
     background-color: var(--bg-color);
     border: 1px solid var(--border-color);
     border-radius: 4px;
-    padding: 15px;
+    padding: 20px; /* 增加内边距，减少拥挤感 */
     overflow-y: auto;
     margin-bottom: 15px;
-    font-size: 1em;
-    line-height: 1.6;
+    font-size: 1.05em; /* 略微增大字体 */
     font-family: var(--font-serif);
+    white-space: pre-line; /* 关键：保留AI生成文本中的换行符 */
+    text-align: left;
+}
+
+.game-main-panel {
+    display: flex; /* 使用Flexbox布局 */
 }
 
 .log-entry { margin-bottom: 1.2em; }
 .log-entry.player { color: #82aaff; font-style: italic; }
 .log-entry.player::before { content: '你 > '; color: var(--text-muted-color); }
 .log-entry.ai { color: var(--text-color); }
+
+#game-main-panel {
+    display: flex;
+    flex-direction: column;
+    height: 80vh;
+    width: 100%;
+}
+
+#game-log {
+    flex-grow: 1; /* 游戏日志占据尽可能多的空间 */
+}
 .log-entry.message { color: var(--primary-color); text-align: center; font-style: italic; border-top: 1px dashed var(--border-color); border-bottom: 1px dashed var(--border-color); padding: 10px 0; margin: 15px 0; }
 
 #game-suggestions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; }
@@ -326,6 +342,11 @@ input:focus, textarea:focus, select:focus {
 .suggestion-btn:hover { background-color: var(--primary-color); color: var(--bg-color); }
 
 #action-form { display: flex; gap: 10px; }
+
+#action-form {
+    margin-top: auto; /* 将action form推到容器底部 */
+    /* 其他需要的样式，例如内边距、背景色等 */
+}
 
 /* --- 游戏状态侧边栏 --- */
 #game-sidebar {
@@ -548,17 +569,22 @@ footer a:focus {
 
     .game-container {
         flex-direction: row; /* 切换为水平布局 */
+        height: 75vh; /* 调整游戏容器高度 */
+        width: 100%; /* 确保占据全部宽度 */
     }
 
     #game-sidebar {
-        flex: 0 0 280px; /* 为侧边栏设置固定宽度 */
+        flex: 0 0 320px; /* 增加侧边栏宽度 */
         order: 0; /* 恢复默认顺序 */
-        max-height: 75vh; /* 允许侧边栏独立滚动 */
+        height: auto; /* 移除固定高度，允许内容自适应 */
         overflow-y: auto;
+        margin-right: 20px; /* 为侧边栏增加右边距 */
     }
 
     .game-main-panel {
-        height: 75vh;
+        height: 80vh; /* 与侧边栏高度一致 */
+        flex-direction: column; /* 确保内部元素垂直排列 */
+        width: calc(100% - 340px); /* 计算主面板宽度，考虑侧边栏宽度和间距 */
     }
 }
 
