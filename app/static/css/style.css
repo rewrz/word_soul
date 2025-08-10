@@ -569,7 +569,7 @@ footer a:focus {
 
     .game-container {
         flex-direction: row; /* 切换为水平布局 */
-        height: 75vh; /* 调整游戏容器高度 */
+        height: calc(100vh - 5em); /* 调整游戏容器高度 */
         width: 100%; /* 确保占据全部宽度 */
     }
 
@@ -582,7 +582,7 @@ footer a:focus {
     }
 
     .game-main-panel {
-        height: 80vh; /* 与侧边栏高度一致 */
+        height: calc(100vh - 5em); /* 与侧边栏高度一致 */
         flex-direction: column; /* 确保内部元素垂直排列 */
         width: calc(100% - 340px); /* 计算主面板宽度，考虑侧边栏宽度和间距 */
     }
