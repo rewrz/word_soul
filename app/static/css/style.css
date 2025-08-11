@@ -420,6 +420,11 @@ input:focus, textarea:focus, select:focus {
     background-color: var(--primary-hover-color);
 }
 
+.session-item .delete-btn {
+    background-color: #4a5568;
+    color: var(--text-color);
+}
+
 .session-item .delete-btn:hover {
     background-color: var(--danger-color);
     color: #fff;

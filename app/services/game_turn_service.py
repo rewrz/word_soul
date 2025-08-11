@@ -2,6 +2,7 @@ import re
 from sqlalchemy.orm.attributes import flag_modified
 from app.services.ai_service import generate_game_master_response
 from app.services.framework_validator import validate_game_state
+from app.services.ai_corrector_service import AICorrectorService
 
 class GameTurnProcessor:
     """
@@ -35,18 +36,28 @@ class GameTurnProcessor:
         if "error" in ai_response_data:
             return ai_response_data, 500
 
-        # 4. 应用AI叙事结果中的状态变更
-        self._apply_ai_state_changes(ai_response_data)
+        # 4. 【核心修改】调用AI修正服务对AI的输出进行校验和修正
+        corrector = AICorrectorService(self.session)
+        corrected_ai_response, validation_errors = corrector.validate_and_correct(ai_response_data)
 
-        # 5. 如果在战斗中，处理NPC回合和战斗状态检查
+        # 如果校验发现严重错误，可以选择在这里中断或返回特定信息
+        if validation_errors:
+            # 你可以决定如何处理这些错误，例如记录日志，或者向玩家显示一个通用错误
+            print(f"[警告] AI响应未通过逻辑校验: {validation_errors}")
+            # corrected_ai_response['description'] = "（你的思绪有些混乱，刚才发生了什么？）" # 可以选择覆盖描述
+
+        # 5. 应用修正后的AI叙事结果中的状态变更
+        self._apply_ai_state_changes(corrected_ai_response)
+
+        # 6. 如果在战斗中，处理NPC回合和战斗状态检查
         if self.current_state.get('in_combat'):
             self._process_npc_turns()
             self._check_combat_status()
 
         # 6. 丰富AI建议，并进行最终状态校验
-        if 'suggested_choices' in ai_response_data:
-            ai_response_data['suggested_choices'] = self._enrich_suggestions(
-                ai_response_data['suggested_choices']
+        if 'suggested_choices' in corrected_ai_response:
+            corrected_ai_response['suggested_choices'] = self._enrich_suggestions(
+                corrected_ai_response['suggested_choices']
             )
 
         is_valid, validation_errors = validate_game_state(self.current_state, self.setting_pack)
@@ -55,12 +66,12 @@ class GameTurnProcessor:
             return {"error": "游戏状态出现异常，为防止数据损坏已中断操作。请尝试重试或联系管理员。"}, 500
 
         # 7. 更新历史记录并准备返回
-        self._update_history(player_action, ai_response_data)
+        self._update_history(player_action, corrected_ai_response)
 
         # 标记状态已被修改，以便SQLAlchemy能检测到
         flag_modified(self.session, "current_state")
 
-        response_payload = {**ai_response_data, "current_state": self.current_state}
+        response_payload = {**corrected_ai_response, "current_state": self.current_state}
         return response_payload, 200
 
     def _cleanup_temporary_flags(self):

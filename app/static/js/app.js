@@ -158,6 +158,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- View Management ---
     function showView(viewId) {
+        // 清除全局错误提示
+        globalError.style.display = 'none';
+        globalError.innerHTML = '';
+        
         views.forEach(view => view.style.display = 'none');
         const targetView = document.getElementById(viewId);
         if (targetView) targetView.style.display = 'block';
@@ -231,22 +235,34 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        const response = await fetchWithAuth(`/sessions/${sessionId}`, {
-            method: 'DELETE',
-        });
+        try {
+            const response = await fetchWithAuth(`/sessions/${sessionId}`, {
+                method: 'DELETE',
+            });
 
-        if (response && response.ok) {
-            // Add a nice fade-out effect for better UX
-            elementToRemove.style.transition = 'opacity 0.3s ease-out';
-            elementToRemove.style.opacity = '0';
-            setTimeout(() => {
-                elementToRemove.remove();
-                if (sessionList.children.length === 0) {
-                    sessionList.innerHTML = '<p>尚无纪传。咏唱创世之言以开启新的篇章。</p>';
+            if (response && response.ok) {
+                // 如果有元素需要从DOM中移除
+                if (elementToRemove) {
+                    // Add a nice fade-out effect for better UX
+                    elementToRemove.style.transition = 'opacity 0.3s ease-out';
+                    elementToRemove.style.opacity = '0';
+                    setTimeout(() => {
+                        elementToRemove.remove();
+                        if (sessionList.children.length === 0) {
+                            sessionList.innerHTML = '<p>尚无纪传。咏唱创世之言以开启新的篇章。</p>';
+                        }
+                    }, 300);
+                } else {
+                    // 如果没有提供元素，则刷新整个会话列表
+                    console.log('删除成功，正在刷新会话列表...');
+                    await loadAndShowMainMenu();
                 }
-            }, 300);
-        } else {
-            handleApiError('删除纪传失败，请重试。', () => handleDeleteSession(sessionId, elementToRemove));
+            } else {
+                handleApiError('删除纪传失败，请重试。', () => handleDeleteSession(sessionId, elementToRemove));
+            }
+        } catch (error) {
+            console.error('删除会话时发生错误:', error);
+            handleApiError('删除纪传时发生错误，请重试。', () => handleDeleteSession(sessionId, elementToRemove));
         }
     }
 
@@ -299,9 +315,25 @@ document.addEventListener('DOMContentLoaded', function() {
         const button = target.closest('button');
         if (!button) return;
 
+        // 优先从按钮的data-session-id属性获取sessionId
+        let sessionId = button.dataset.sessionId;
+        
+        // 如果按钮上没有sessionId，则从父元素.session-item获取
+        if (!sessionId) {
+            const itemElement = target.closest('.session-item');
+            if (itemElement) {
+                sessionId = itemElement.dataset.sessionId;
+            }
+        }
+        
+        // 确保我们有sessionId
+        if (!sessionId) {
+            console.error('无法获取会话ID');
+            return;
+        }
+        
         const itemElement = target.closest('.session-item');
-        const sessionId = itemElement.dataset.sessionId;
-
+        
         if (button.classList.contains('continue-btn')) {
             loadSessionAndStartGame(sessionId);
         } else if (button.classList.contains('set-session-ai-btn')) {
@@ -323,32 +355,36 @@ document.addEventListener('DOMContentLoaded', function() {
         e.preventDefault();
         const submitBtn = createWorldForm.querySelector('button[type="submit"]');
         const originalBtnText = submitBtn.textContent;
-
+    
+        // 添加前端验证，确保world_name不为空
+        const worldName = document.getElementById('world-name').value.trim();
+        if (!worldName) {
+            handleApiError('世界创造失败: 创世设定不完整，必须提供 \'world_name\' 的内容。', null);
+            return;
+        }
+    
         showWorldFormSkeleton();
         submitBtn.disabled = true;
         assistCreateWorldBtn.disabled = true;
         cancelCreateWorldBtn.disabled = true;
         submitBtn.textContent = '创造中...';
-
+    
         try {
-            const worldName = document.getElementById('world-name').value;
-            const worldRules = document.getElementById('world-rules').value;
-            const initialScene = document.getElementById('initial-scene').value;
-            const narrativePrinciples = document.getElementById('narrative-principles').value;
-
-            const worldKeywords = `世界名称: ${worldName}; 核心规则: ${worldRules}; 初始场景: ${initialScene}; 叙事原则: ${narrativePrinciples}`;
-
+            // 核心修复：构建与后端 /worlds 端点期望的 `initial_settings` 结构完全匹配的JSON对象。
             const worldData = {
-                world_keywords: worldKeywords,
-                player_description: document.getElementById('character-description').value,
+                world_name: worldName,
+                character_description: document.getElementById('character-description').value.trim(),
+                world_rules: document.getElementById('world-rules').value.trim(),
+                initial_scene: document.getElementById('initial-scene').value.trim(),
+                narrative_principles: document.getElementById('narrative-principles').value.trim(),
                 active_ai_config_id: creationAiConfigSelect.value
             };
-
+    
             const response = await fetchWithAuth('/worlds', {
                 method: 'POST',
                 body: JSON.stringify(worldData),
             });
-
+    
             if (response && response.ok) {
                 const data = await response.json();
                 createWorldForm.reset();
@@ -372,39 +408,46 @@ document.addEventListener('DOMContentLoaded', function() {
 
     async function handleAssistCreateWorld() {
         const currentData = {
-            world_name: document.getElementById('world-name').value,
-            character_description: document.getElementById('character-description').value,
-            world_rules: document.getElementById('world-rules').value,
-            initial_scene: document.getElementById('initial-scene').value,
-            narrative_principles: document.getElementById('narrative-principles').value,
+            world_name: document.getElementById('world-name').value.trim(),
+            character_description: document.getElementById('character-description').value.trim(),
+            world_rules: document.getElementById('world-rules').value.trim(),
+            initial_scene: document.getElementById('initial-scene').value.trim(),
+            narrative_principles: document.getElementById('narrative-principles').value.trim(),
             // 修改：从创世页面的下拉菜单中获取AI配置ID
             active_ai_config_id: creationAiConfigSelect.value
         };
-
+    
         showWorldFormSkeleton();
-
+    
         assistCreateWorldBtn.disabled = true;
         assistCreateWorldBtn.textContent = '咏唱中...';
-
+    
         try {
             const response = await fetchWithAuth('/worlds/assist', {
                 method: 'POST',
                 body: JSON.stringify(currentData),
             });
-
+    
             if (response && response.ok) {
                 const assistedData = await response.json();
                 if (assistedData.error) {
                     alert(`AI辅助失败: ${assistedData.error}`);
                     return;
                 }
-
-                document.getElementById('world-name').value = assistedData.world_name || '';
-
+    
+                // 确保AI返回的world_name不为空，如果为空则保留用户原来输入的值
+                const worldName = assistedData.world_name ? assistedData.world_name.trim() : currentData.world_name;
+                document.getElementById('world-name').value = worldName;
+    
                 document.getElementById('character-description').value = assistedData.character_description || '';
                 document.getElementById('world-rules').value = assistedData.world_rules || '';
                 document.getElementById('initial-scene').value = assistedData.initial_scene || '';
                 document.getElementById('narrative-principles').value = assistedData.narrative_principles || '';
+                
+                // 如果AI没有生成world_name，提示用户
+                if (!worldName) {
+                    alert('AI未能生成世界名称，请手动填写后再创建世界。');
+                }
             } else {
                 const errorData = response ? await response.json().catch(() => ({ error: '无法解析错误响应' })) : { error: '未知网络错误' };
                 handleApiError(`AI辅助失败: ${errorData.error || '请稍后再试。'}`, handleAssistCreateWorld);

@@ -74,26 +74,37 @@ def create_world():
     """
     创世咏唱
     创建一个新世界并开始第一个游戏会话。
+    此端点接收由前端“创世表单”提交的、用户最终确认的完整世界设定。
     """
     current_user_id = int(get_jwt_identity())
     data = request.get_json()
     if not data:
         return jsonify({"error": "无效的输入"}), 400
 
-    # 接收用户的背景关键词和选择的AI模型
-    world_keywords = data.get('world_keywords') # 例如: "赛博朋克, 东方武学, 霓虹都市"
-    player_description = data.get('player_description') # 玩家对自己角色的初步描述
+    # 1. 从前端接收用户最终确认的、可能经过AI辅助和修改的完整设定。
+    # 这些键名应与前端表单(index.html)中的ID和assist_world_creation的返回保持一致。
+    initial_settings = {
+        "world_name": data.get('world_name'),
+        # 注意：前端 character_description 映射到后端的 player_character_description
+        "player_character_description": data.get('character_description'),
+        # 注意：前端 world_rules 映射到后端的 world_description
+        "world_description": data.get('world_rules'),
+        "initial_scene": data.get('initial_scene'),
+        "narrative_principles": data.get('narrative_principles')
+    }
     active_ai_config_id = data.get('active_ai_config_id')
 
-    if not world_keywords:
-        return jsonify({"error": "必须提供世界背景关键词"}), 400
+    # 2. 简单校验，确保核心字段不为空
+    for key, value in initial_settings.items():
+        if not value:
+            # 前端应该已经做了校验，但后端再做一次以确保安全
+            return jsonify({"error": f"创世设定不完整，必须提供 '{key}' 的内容。"}), 400
 
-    # 3. 调用AI生成设定包。
-    # generate_setting_pack 函数内部已经包含了分步生成、校验和重试逻辑。
+    # 3. 调用AI服务补完设定包的其余部分（如属性、物品、技能等）。
+    # 我们将用户提供的核心设定作为基础传递进去。
     raw_setting_pack = generate_setting_pack(
-        world_keywords,
-        player_description,
-        active_ai_config_id
+        active_ai_config_id=active_ai_config_id,
+        initial_settings=initial_settings
     )
 
     # 4. 检查生成结果。如果包含error，说明内部重试后依然失败。
@@ -118,7 +129,7 @@ def create_world():
 
     initial_state = {
         "attributes": attributes,
-        "player_character": raw_setting_pack.get("player_character_description", player_description),
+        "player_character": raw_setting_pack.get("player_character_description"),
         "current_location": raw_setting_pack["initial_scene"], # 直接获取初始场景
         "inventory": [],
         "active_quests": {},

@@ -270,7 +270,8 @@ def assist_world_creation_text(world_name, character_description, world_rules, i
 - 如果用户提供了某个字段的内容，你必须在该内容的基础上进行扩充和润色，使其更加生动和具体。
 - 如果用户将某个字段留空，你必须根据其他已填写的字段，创作出与之风格协调、逻辑自洽的内容。
 - 如果用户所有字段都留空，你必须随机生成一个完整、有趣、充满想象力的世界设定。
-- **重要**: 所有字段的值都必须是**字符串 (string)**。对于像“世界规则”这样复杂的内容，请将其全部写入一个单一的、详细的字符串中，**不要**使用嵌套的JSON对象。
+- **重要**: 所有字段的值都必须是**字符串 (string)**。对于像"世界规则"这样复杂的内容，请将其全部写入一个单一的、详细的字符串中，**不要**使用嵌套的JSON对象。
+- **特别重要**: 你必须始终提供一个非空的world_name（此界之名）字段，这是创建世界的必要条件。
 
 # 用户输入
 {formatted_input}
@@ -280,41 +281,69 @@ def assist_world_creation_text(world_name, character_description, world_rules, i
 
 ```json
 {{
-    "WORLD_NAME": "(生成一个独特且富有吸引力的故事名称，要足够吸睛和劲爆，一般是故事的核心升华，使用浮夸和猎奇的手法引起玩家的好奇心)",
-    "CHARACTER_DESCRIPTION": "(关键角色的具体描述，包括主要男女主角（如有）、主要配角（如有）、主要反派角色（如有）等影响整个故事发展的关键角色要点介绍，禁止使用神秘的、古老的、未知的等模糊描述)",
-    "WORLD_RULES": "(一个**单一的字符串**，概括这个世界主要讲了一个什么故事，采用线性的叙事结构，融合主线、支线、伏笔\暗线、感情线的完整线性故事发展，至少要有一个惊天的大反转，例如玄幻世界里一个废物主角逆袭成为人人爱慕的宇宙帝王等，根据世界观背景类型以及故事内容所需而定，例如力量体系或技能体系或装备体系或门派体系等方面，力量等级要清晰，不同等级的差距和特点需明确描述。主角所使用的技能要罗列并注解其威力和影响，装备的获取方式、效果等也要详细设定。比如在仙侠世界中，设定从练气到飞升的多个力量等级，每个等级的能力和突破条件都不同)",
-    "INITIAL_SCENE": "(描绘一个具体的开场画面，也是主角的初始场景，至少要描述该场景的背景、关键事件、关键角色（若有）、关键物品（若有）、关键任务（若有）等。)",
-    "NARRATIVE_PRINCIPLES": "(设定一个清晰的故事基调，例如：现代都市、架空奇幻、未来科幻、末世、言情、修仙、玄幻、魔法奇幻、轻小说等)"
+    "world_name": "(生成一个独特且富有吸引力的故事名称，要足够吸睛和劲爆，一般是故事的核心升华，使用浮夸和猎奇的手法引起玩家的好奇)",
+    "character_description": "(关键角色的具体描述，包括主要男女主角（如有）、主要配角（如有）、主要反派角色（如有）等影响整个故事发展的关键角色要点介绍，禁止使用神秘的、古老的、未知的等模糊描述)",
+    "world_rules": "(一个**单一的字符串**，概括这个世界主要讲了一个什么故事，采用线性的叙事结构，融合主线、支线、伏笔\暗线、感情线的完整线性故事发展，至少要有一个惊天的大反转，例如玄幻世界里一个废物主角逆袭成为人人爱慕的宇宙帝王等，根据世界观背景类型以及故事内容所需而定，例如力量体系或技能体系或装备体系或门派体系等方面，力量等级要清晰，不同等级的差距和特点需明确描述。主角所使用的技能要罗列并注解其威力和影响，装备的获取方式、效果等也要详细设定。比如在仙侠世界中，设定从练气到飞升的多个力量等级，每个等级的能力和突破条件都不同)",
+    "initial_scene": "(描绘一个具体的开场画面，也是主角的初始场景，至少要描述该场景的背景、关键事件、关键角色（若有）、关键物品（若有）、关键任务（若有）等。)",
+    "narrative_principles": "(设定一个清晰的故事基调，例如：现代都市、架空奇幻、未来科幻、末世、言情、修仙、玄幻、魔法奇幻、轻小说等)"
 }}
 ```
 """
-    # 创世辅助根据传入的配置调用AI
-    ai_response_text = call_llm_api(prompt, active_config=active_config)
 
-    # 尝试格式化输出，如失败则原样返回
-    ai_response_text = format_json_like_string(ai_response_text)
+    # 获取AI配置
+    ai_config = active_config or Setting.query.filter_by(is_global=True).first()
+    if not ai_config:
+        return {"error": "未找到有效的AI配置。请先设置AI配置。"}
 
-    # 检查API调用是否返回了空内容或错误信息
-    if not ai_response_text or not ai_response_text.strip():
-        return {"world_name": "[错误] AI服务返回了空内容，请重试。"}
+    # 调用AI
+    response_text = call_llm_api(prompt, active_config)
 
-    if ai_response_text.strip().startswith("[错误]"):
-        return {"world_name": ai_response_text}
-    # 解析AI的输出
-    parsed_data = parse_ai_output(ai_response_text)
+    # 检查是否有错误
+    if response_text.startswith("[错误]"):
+        return {"world_name": response_text}
 
-    # 检查解析结果是否为空，这表示AI没有遵循格式
-    if not parsed_data:
-        return {"world_name": "[错误] AI未能按预期格式生成内容，请重试。"}
+    # 尝试解析JSON
+    try:
+        # 提取JSON部分
+        json_match = re.search(r'```json\s*({[\s\S]*?})\s*```', response_text)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            json_match = re.search(r'{[\s\S]*?}', response_text)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                return {"world_name": "[错误] AI未能生成有效的JSON格式响应。"}
 
-    # 而不是None，这样可以防止前端JS因处理null而出错或清空表单。
-    return {
-        "world_name": parsed_data.get("world_name", ""),
-        "character_description": parsed_data.get("character_description", ""),
-        "world_rules": parsed_data.get("world_rules", ""),
-        "initial_scene": parsed_data.get("initial_scene", ""),
-        "narrative_principles": parsed_data.get("narrative_principles", ""),
-    }
+        # 解析JSON
+        assisted_data = json.loads(json_str)
+
+        # 确保world_name字段不为空
+        if not assisted_data.get("world_name"):
+            # 如果用户提供了world_name，则使用用户的输入
+            if world_name:
+                assisted_data["world_name"] = world_name
+            else:
+                # 否则生成一个默认的world_name
+                assisted_data["world_name"] = "未命名世界_" + str(int(time.time()))
+
+        # 映射字段名称
+        return {
+            "world_name": assisted_data.get("world_name", ""),
+            "character_description": assisted_data.get("character_description", ""),
+            "world_rules": assisted_data.get("world_rules", ""),
+            "initial_scene": assisted_data.get("initial_scene", ""),
+            "narrative_principles": assisted_data.get("narrative_principles", "")
+        }
+    except json.JSONDecodeError as e:
+        print(f"JSON解析错误: {e}")
+        print(f"原始响应: {response_text}")
+        return {"world_name": f"[错误] AI生成的响应无法解析为JSON: {str(e)}"}
+    except Exception as e:
+        print(f"处理AI响应时发生错误: {e}")
+        return {"world_name": f"[错误] 处理AI响应时发生错误: {str(e)}"}
+
+
 
 def _generate_world_meta(world_keywords, player_description, active_config, previous_errors=None):
     """
@@ -358,7 +387,7 @@ def _generate_world_meta(world_keywords, player_description, active_config, prev
     response_text = call_llm_api(prompt, active_config)
     return parse_ai_output(response_text)
 
-def _generate_attributes(world_keywords, player_description, active_config, previous_errors=None):
+def _generate_attributes(setting_pack, active_config, previous_errors=None):
     """
     第二步：生成属性维度。
     """
@@ -373,11 +402,12 @@ def _generate_attributes(world_keywords, player_description, active_config, prev
 """
     prompt = f"""
 {correction_prompt_part}
-你是一个游戏设计师。根据用户提供的关键词，为游戏角色设计核心属性。
+你是一个游戏设计师。根据已有的世界观设定，为游戏角色设计核心属性。
 
-# 用户输入
-- 世界关键词: {world_keywords}
-- 玩家角色描述: {player_description}
+# 世界观设定参考
+- 故事基调: {setting_pack.get('narrative_principles', '未知')}
+- 世界描述: {setting_pack.get('world_description', '未知')}
+- 玩家角色: {setting_pack.get('player_character_description', '未知')}
 
 # 你的任务
 生成一个JSON对象 `attribute_dimensions`。
@@ -438,7 +468,7 @@ def _generate_content_modules(world_keywords, player_description, setting_pack, 
 3.  **商人与敌人**: 你必须创建至少一个商人NPC，并为其 `售卖物品` 列表添加一些你在物品库中定义的、有价格的物品。同时，必须创建一个可供战斗的敌对NPC (`is_hostile: true`)。
 
 # 你的任务
-按照设定，生成一个符合设定逻辑的JSON对象，包含 `items`, `skills`, `npcs`, `tasks` 四个模块，例如：
+按照设定，生成一个符合设定逻辑的JSON对象，包含 `items`, `skills`, `npcs`, `tasks` 四个模块，示例如下：
 
 ```json
 {{
@@ -471,8 +501,8 @@ def _generate_content_modules(world_keywords, player_description, setting_pack, 
   ],
   "npcs": [
     {{
-      "名称": "商人巴特",
-      "描述": "一个友善的商人。",
+      "名称": "RewrZ",
+      "描述": "一个friendly的商人。",
       "位置": "{setting_pack.get('initial_scene', '未知')}",
       "对话样本": "需要点什么吗？",
       "attributes": {{ "{valid_attribute_names[0]}": 100, "{valid_attribute_names[1]}": 5 }},
@@ -480,7 +510,7 @@ def _generate_content_modules(world_keywords, player_description, setting_pack, 
       "售卖物品": ["生命药水"]
     }},
     {{
-      "名称": "哥布林斥候",
+      "名称": "XXX",
       "描述": "一个鬼鬼祟祟的哥布林。",
       "位置": "{setting_pack.get('initial_scene', '未知')}",
       "对话样本": "滚开，人类！",
@@ -508,7 +538,12 @@ def _validate_meta(data):
         elif not isinstance(data[key], str) or not data[key].strip():
             errors.append(f"元数据键 '{key}' 的值必须是一个非空的字符串。")
     return not errors, errors
-def generate_setting_pack(world_keywords, player_description, active_ai_config_id):
+def generate_setting_pack(
+    active_ai_config_id,
+    world_keywords=None,
+    player_description=None,
+    initial_settings=None
+):
     """
     调用大模型，根据用户关键词生成结构化的“动态设定包”。
     """
@@ -521,25 +556,38 @@ def generate_setting_pack(world_keywords, player_description, active_ai_config_i
     max_retries_per_step = 3
     setting_pack = {}
 
-    # 步骤 1: 生成并校验世界元数据
-    last_errors = []
-    for attempt in range(max_retries_per_step):
-        print(f"--- 创世咏唱[1/3]: 生成世界元数据 (尝试 {attempt + 1}/{max_retries_per_step}) ---")
-        meta_data = _generate_world_meta(world_keywords, player_description, active_config, previous_errors=last_errors)
-        is_valid, last_errors = _validate_meta(meta_data)
-        if is_valid:
-            setting_pack.update(meta_data)
-            break
-        else:
-            print(f"--- 元数据校验失败: {last_errors} ---")
+    # 步骤 1: 处理世界元数据
+    if initial_settings:
+        # 情况A：使用前端提供的、用户已确认的元数据
+        print("--- 创世咏唱[1/3]: 使用用户提供的元数据 ---")
+        is_valid, errors = _validate_meta(initial_settings)
+        if not is_valid:
+            return {"error": "提供的元数据校验失败。", "details": errors}
+        setting_pack.update(initial_settings)
+    elif world_keywords:
+        # 情况B（备用）：从关键词开始生成元数据
+        last_errors = []
+        for attempt in range(max_retries_per_step):
+            print(f"--- 创世咏唱[1/3]: 生成世界元数据 (尝试 {attempt + 1}/{max_retries_per_step}) ---")
+            meta_data = _generate_world_meta(world_keywords, player_description, active_config, previous_errors=last_errors)
+            is_valid, last_errors = _validate_meta(meta_data)
+            if is_valid:
+                setting_pack.update(meta_data)
+                break
+            else:
+                print(f"--- 元数据校验失败: {last_errors} ---")
+        else: # for...else, 循环正常结束（未被break）时执行
+            return {"error": "AI在生成世界元数据时多次失败。", "details": last_errors}
     else:
-        return {"error": "AI在生成世界元数据时多次失败。", "details": last_errors}
+        # 两种必要输入都没有提供
+        return {"error": "无法创建世界：必须提供完整的初始设定或背景关键词。"}
 
     # 步骤 2: 生成并校验属性维度
     last_errors = []
     for attempt in range(max_retries_per_step):
         print(f"--- 创世咏唱[2/3]: 生成属性维度 (尝试 {attempt + 1}/{max_retries_per_step}) ---")
-        attr_data = _generate_attributes(world_keywords, player_description, active_config, previous_errors=last_errors)
+        # 使用已有的setting_pack作为上下文，而不是简单的关键词
+        attr_data = _generate_attributes(setting_pack, active_config, previous_errors=last_errors)
         if not attr_data or "attribute_dimensions" not in attr_data:
              last_errors = ["AI未能生成'attribute_dimensions'模块。"]
              continue
@@ -556,7 +604,7 @@ def generate_setting_pack(world_keywords, player_description, active_ai_config_i
     last_errors = []
     for attempt in range(max_retries_per_step):
         print(f"--- 创世咏唱[3/3]: 生成游戏内容模块 (尝试 {attempt + 1}/{max_retries_per_step}) ---")
-        content_modules = _generate_content_modules(world_keywords, player_description, setting_pack, active_config, previous_errors=last_errors)
+        content_modules = _generate_content_modules(None, None, setting_pack, active_config, previous_errors=last_errors)
         if not content_modules:
             last_errors = ["AI未能生成内容模块。"]
             continue
@@ -649,7 +697,7 @@ def _generate_narrative_description(context, active_config):
 
 # 世界设定
 - **故事基调**: {context['narrative_principles']}
-- **世界设定**: {context['world_description']}
+- **世界设定或故事主线**: {context['world_description']}
 - **关键角色设定**: {context['player_character_description']}
 
 # 当前状态
@@ -662,11 +710,11 @@ def _generate_narrative_description(context, active_config):
 玩家: {context['player_action']}
 
 # 你的任务
-作为故事的叙述者，请简短叙述玩家行动后的故事情节，例如事件发展变化、新的场景、NPC的反应等。
-如果玩家的行动触发了关键剧情（例如与重要NPC交谈、给予关键物品），请重点描述。
-如果场景陷入沉闷，请主动引入新事件（例如：NPC出现、触发新事件、有新发现等）来推进故事。
+- 作为故事的叙述者，请简短说明玩家行动后发生的情节，例如事件发展变化、到了新的场景、NPC的反应等。
+- 如果场景陷入沉闷，请主动引入新事件（例如：NPC出现、触发新事件、有新发现等）来推进故事。
+- **请务必严格按照世界设定或故事主线以及角色设定来生成剧情，严禁偏离。**
 
-**你的输出只能是纯文本的故事情节和描述，就像在写网络小说一样，请勿输出任何其他内容。**
+**你的输出只能是纯文本的故事情节，就像在写网络小说一样，请勿输出任何其他内容。**
 """
     response_text = call_llm_api(prompt, active_config, history=context['history_for_api'])
     # 简单检查错误，如果出错则直接返回错误信息
@@ -731,7 +779,8 @@ def _generate_action_suggestions(narrative_text, context, active_config):
 - **可用技能**: {context['available_skills_str']}
 
 # 你的任务
-生成2-4个多样化且符合逻辑的行动建议（例如：与环境互动、与NPC交谈、使用物品/技能或表达个人意图等）。
+- 生成2-4个多样化且符合逻辑的行动建议（例如：与环境互动、与NPC交谈、使用物品/技能或表达个人意图等）。
+- **请务必严格按照世界设定和角色设定来生成行动建议，严禁偏离。**
 
 # 输出格式
 请严格按照以下JSON格式输出一个对象，其中包含一个名为 `SUGGESTED_CHOICES` 的列表。
@@ -742,11 +791,11 @@ def _generate_action_suggestions(narrative_text, context, active_config):
 {{
     "SUGGESTED_CHOICES": [
         {{
-            "display_text": "(一个描述性的行动建议，例如：'你决定使用金疮药治疗伤口。')",
+            "display_text": "(一个简短的行动建议，例如：'你决定使用金疮药治疗伤口。')",
             "action_command": "使用 金疮药"
         }},
         {{
-            "display_text": "(另一个描述性的行动建议，例如：'你仔细观察周围的环境。')",
+            "display_text": "(另一个简短的行动建议，例如：'你仔细观察周围的环境。')",
             "action_command": "观察 周围"
         }},
         {{
