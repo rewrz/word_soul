@@ -32,12 +32,19 @@ class AICorrectorService:
         errors.extend(state_change_errors)
 
         # 步骤 3: 内容修正 (Correction)
-        # 如果发现错误，可以尝试修正或标记。
-        # 目前，我们主要记录错误，复杂的修正可能需要重新调用AI。
+        # 如果发现错误，尝试自动修复或重新生成
         if errors:
             print(f"[AI修正服务] 在会话 {self.session.id} 中发现不一致: {errors}")
-            # 可以在这里添加逻辑，如果错误严重，则触发AI重新生成。
-            # 例如: ai_response['description'] = "世界之灵似乎走神了，请你重述一遍你的行动。"
+            
+            # 对AI响应进行自动修复
+            ai_response = self._auto_fix_errors(ai_response, errors)
+            
+            # 检查是否有严重错误需要重新生成
+            if self._has_critical_errors(errors):
+                # 触发重新生成机制
+                regenerated_response = self._regenerate_ai_response(ai_response, errors)
+                if regenerated_response:
+                    return regenerated_response, ["已重新生成响应以修复严重错误"]
         
         return ai_response, errors
 
@@ -176,7 +183,150 @@ def use_rule_engine_for_validation(game_session, ai_response):
     你可以使用像 `pyknow` 或 `durable_rules` 这样的库。
 
     1. 定义规则 (e.g., IF world is 'Cyberpunk' AND narrative contains 'Magic' -> THEN raise InconsistencyError).
-    2. 将 game_session 和 ai_response 作为“事实”(Facts) 输入引擎。
+    2. 将 game_session 和 ai_response 作为"事实"(Facts) 输入引擎。
     3. 运行引擎，收集所有触发的错误。
     """
     pass # 此处为伪代码，具体实现取决于所选的规则引擎库。
+
+
+    def _auto_fix_errors(self, ai_response: Dict[str, Any], errors: List[str]) -> Dict[str, Any]:
+        """
+        自动修复简单错误。
+        根据错误类型和内容，尝试对AI响应进行自动修复。
+        """
+        # 创建一个响应的副本，以便进行修改
+        fixed_response = ai_response.copy()
+        
+        # 处理物品相关错误
+        for error in errors:
+            # 修复：移除不存在的物品
+            if "AI试图移除玩家并不拥有的物品" in error:
+                # 从错误消息中提取物品名称
+                item_match = re.search(r"AI试图移除玩家并不拥有的物品: '(.+?)'$", error)
+                if item_match and 'remove_item_from_inventory' in fixed_response:
+                    # 清除该物品的移除请求
+                    fixed_response['remove_item_from_inventory'] = None
+                    print(f"[自动修复] 已移除对不存在物品的移除请求: {item_match.group(1)}")
+            
+            # 修复：添加未定义的物品
+            elif "AI试图添加一个未在世界设定中定义的物品" in error:
+                item_match = re.search(r"AI试图添加一个未在世界设定中定义的物品: '(.+?)'$", error)
+                if item_match and 'add_item_to_inventory' in fixed_response:
+                    # 清除该物品的添加请求
+                    fixed_response['add_item_to_inventory'] = None
+                    print(f"[自动修复] 已移除对未定义物品的添加请求: {item_match.group(1)}")
+            
+            # 修复：更新不存在的任务
+            elif "AI试图更新一个不存在的任务" in error:
+                quest_match = re.search(r"AI试图更新一个不存在的任务: '(.+?)'$", error)
+                if quest_match and 'update_quest_status' in fixed_response:
+                    # 清除该任务的更新请求
+                    fixed_response['update_quest_status'] = None
+                    print(f"[自动修复] 已移除对不存在任务的更新请求: {quest_match.group(1)}")
+            
+            # 修复：创建已存在的任务
+            elif "AI试图创建一个已经存在的任务" in error:
+                quest_match = re.search(r"AI试图创建一个已经存在的任务: '(.+?)'$", error)
+                if quest_match and 'create_new_quest' in fixed_response:
+                    # 清除该任务的创建请求
+                    fixed_response['create_new_quest'] = None
+                    print(f"[自动修复] 已移除对已存在任务的创建请求: {quest_match.group(1)}")
+            
+            # 修复：建议使用不存在的技能或物品
+            elif "AI建议了不存在的技能或物品" in error:
+                # 这种情况比较复杂，需要修改suggested_choices列表
+                if 'suggested_choices' in fixed_response and isinstance(fixed_response['suggested_choices'], list):
+                    entity_match = re.search(r"AI建议了不存在的技能或物品: '(.+?)'$", error)
+                    if entity_match:
+                        entity_name = entity_match.group(1)
+                        # 过滤掉包含不存在技能或物品的建议
+                        fixed_response['suggested_choices'] = [
+                            choice for choice in fixed_response['suggested_choices']
+                            if not (f"使用 {entity_name}" in choice.get('action_command', ''))
+                        ]
+                        print(f"[自动修复] 已移除包含不存在技能或物品的建议: {entity_name}")
+            
+            # 修复：建议与不在场的NPC交谈
+            elif "AI建议与不在场的NPC" in error:
+                if 'suggested_choices' in fixed_response and isinstance(fixed_response['suggested_choices'], list):
+                    npc_match = re.search(r"AI建议与不在场的NPC '(.+?)' 交谈", error)
+                    if npc_match:
+                        npc_name = npc_match.group(1)
+                        # 过滤掉包含不在场NPC的建议
+                        fixed_response['suggested_choices'] = [
+                            choice for choice in fixed_response['suggested_choices']
+                            if not (f"与 {npc_name} 交谈" in choice.get('action_command', '') or 
+                                   f"和 {npc_name} 交谈" in choice.get('action_command', ''))
+                        ]
+                        print(f"[自动修复] 已移除与不在场NPC交谈的建议: {npc_name}")
+        
+        return fixed_response
+
+    def _has_critical_errors(self, errors: List[str]) -> bool:
+        """
+        判断是否存在需要重新生成的严重错误。
+        """
+        # 定义严重错误的关键词
+        critical_keywords = [
+            "叙事提到了",  # 叙事与位置不一致的错误
+            "叙事中出现了禁用词",  # 叙事中包含禁用词的错误
+        ]
+        
+        # 检查错误数量，如果错误过多也视为严重错误
+        if len(errors) >= 3:
+            return True
+        
+        # 检查是否包含严重错误关键词
+        for error in errors:
+            for keyword in critical_keywords:
+                if keyword in error:
+                    return True
+        
+        return False
+
+    def _regenerate_ai_response(self, ai_response: Dict[str, Any], errors: List[str]) -> Dict[str, Any]:
+        """
+        重新生成AI响应。
+        当检测到严重错误时，调用AI服务重新生成响应。
+        """
+        try:
+            from app.services.ai_service import generate_game_master_response
+            
+            # 获取当前游戏状态和玩家行动
+            setting_pack = self.session.world.setting_pack
+            current_state = self.session.current_state
+            player_action = current_state.get('last_player_action', '观察周围')
+            
+            # 记录重新生成的原因
+            print(f"[AI重新生成] 由于严重错误，正在重新生成响应: {errors}")
+            
+            # 调用AI服务重新生成响应
+            # 添加错误信息作为上下文，帮助AI避免同样的错误
+            error_context = "\n".join([f"- {error}" for error in errors])
+            enhanced_player_action = f"{player_action}\n[系统提示] 上一次生成的响应存在以下问题，请避免:\n{error_context}"
+            
+            # 创建一个临时状态副本，添加错误信息
+            temp_state = current_state.copy()
+            temp_state['last_player_action'] = enhanced_player_action
+            
+            # 调用AI服务重新生成响应
+            new_response = generate_game_master_response(
+                setting_pack, 
+                temp_state, 
+                enhanced_player_action, 
+                self.session, 
+                action_was_unparsed=False
+            )
+            
+            # 如果重新生成成功，返回新响应
+            if new_response and not new_response.get('error'):
+                print("[AI重新生成] 成功重新生成响应")
+                return new_response
+            else:
+                print(f"[AI重新生成] 失败: {new_response.get('error', '未知错误')}")
+                return None
+        except Exception as e:
+            print(f"[AI重新生成] 发生异常: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
