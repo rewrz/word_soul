@@ -68,3 +68,12 @@ class Setting(db.Model):
 
     def __repr__(self):
         return f"<Setting(config_name='{self.config_name}', user_id={self.user_id}, api_type='{self.api_type}')>"
+
+class TokenBlocklist(db.Model):
+    """
+    令牌黑名单模型，用于存储已登出或失效的JWT。
+    """
+    __tablename__ = 'token_blocklist'
+    id = db.Column(db.Integer, primary_key=True)
+    jti = db.Column(db.String(36), nullable=False, unique=True, index=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))

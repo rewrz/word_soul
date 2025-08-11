@@ -2,7 +2,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- Constants & State ---
     const API_URL = '/api';
     const state = {
-        token: localStorage.getItem('jwt_token'),
+        accessToken: localStorage.getItem('access_token'), // 修改：更精确地命名为accessToken
         currentSessionId: null,
         activeAiConfigId: localStorage.getItem('active_ai_config_id'), // 新增：从本地存储加载激活的AI配置ID
         currentWorldName: null,
@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- DOM Elements ---
     const views = document.querySelectorAll('.view');
     const authError = document.getElementById('auth-error');
+    const globalError = document.getElementById('global-error'); // 新增：全局错误显示区域
 
     // Auth
     const loginForm = document.getElementById('login-form');
@@ -65,20 +66,94 @@ document.addEventListener('DOMContentLoaded', function() {
     async function fetchWithAuth(endpoint, options = {}) {
         const headers = {
             'Content-Type': 'application/json',
+            // 总是尝试发送 Cookie (如果启用)，即使是跨域请求
+            'credentials': 'include',
             ...options.headers,
         };
-        if (state.token) {
-            headers['Authorization'] = `Bearer ${state.token}`;
-        }
+        // 修改：使用 accessToken
+        if (state.accessToken) {
+            headers['Authorization'] = `Bearer ${state.accessToken}`;
+        } 
 
         const response = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
 
-        // Only treat 401 as an expired session if we were actually sending a token
-        if (response.status === 401 && state.token) {
-            handleLogout();
-            return null;
+        // 核心修改：处理 access token 过期的情况
+        if (response.status === 401) {
+            const responseData = await response.json();
+            if (responseData && responseData.error === 'token_expired') {
+                // 尝试刷新 access token
+                const refreshSuccessful = await refreshToken();
+                if (refreshSuccessful) {
+                    // 刷新成功后，重新发起原始请求
+                    return fetchWithAuth(endpoint, options);
+                } else {
+                    // 刷新失败，登出
+                    handleLogout();
+                    return null; // 确保调用者知道请求失败
+                }
+            } else {
+                // 如果不是 token 过期错误，也登出
+                // 修改：使用全局错误处理显示错误信息
+                handleApiError('登录状态已过期，请重新登录。', handleLogout);
+                return null;
+            }
         }
+
         return response;
+    }
+
+    // --- Error Handling Module ---
+    function handleApiError(message, retryCallback = null, feedback = false) {
+        // 清空之前的错误信息和按钮
+        globalError.innerHTML = '';
+
+        globalError.textContent = message;
+        globalError.style.display = 'block';
+
+        if (retryCallback) {
+            // 加个空格，让按钮和文字有点距离
+            globalError.appendChild(document.createTextNode(' '));
+
+            const retryBtn = document.createElement('button');
+            retryBtn.textContent = '重试';
+            retryBtn.onclick = () => {
+                globalError.style.display = 'none';
+                retryCallback();
+            };
+            globalError.appendChild(retryBtn);
+        }
+
+        if (feedback) {
+            // TODO: Implement feedback mechanism (e.g., link to contact form)
+            globalError.appendChild(document.createTextNode(' '));
+            const feedbackLink = document.createElement('a');
+            globalError.appendChild(feedbackLink);
+        }
+    }
+
+    // 核心新增：刷新令牌的函数
+    async function refreshToken() {
+        const refreshToken = localStorage.getItem('refresh_token');
+        if (!refreshToken) {
+            console.warn("No refresh token available.");
+            return false;
+        }
+
+        const response = await fetch('/api/refresh', { // 注意：这里没有使用 fetchWithAuth
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: refreshToken }) // 明确地传递 refresh token
+        });
+
+        const data = await response.json();
+        if (response.ok) {
+            localStorage.setItem('access_token', data.access_token);
+            state.accessToken = data.access_token;
+            return true;
+        } else {
+            console.error("Failed to refresh token:", data.error);
+            return false;
+        }
     }
 
     // --- View Management ---
@@ -103,10 +178,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const data = await response.json();
             if (response.ok) {
-                state.token = data.access_token;
-                console.log("Token received and stored:", state.token); // Diagnostic log
-                localStorage.setItem('jwt_token', state.token);
+                // 存储 access token 和 refresh token
+                state.accessToken = data.access_token;
+                localStorage.setItem('access_token', data.access_token);
+                localStorage.setItem('refresh_token', data.refresh_token);
                 await loadAndShowMainMenu();
+                console.log("Access Token received and stored:", state.accessToken);
+                console.log("Refresh Token received and stored");
             } else {
                 authError.textContent = data.error || '登录失败';
             }
@@ -138,12 +216,12 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function handleLogout() {
-        state.token = null;
+        state.accessToken = null;
         state.currentSessionId = null;
         state.currentWorldName = null;
-        localStorage.removeItem('jwt_token');
-        console.log("Logging out, token was:", state.token); // Diagnostic log
-
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        console.log("Logging out, token was:", state.accessToken); // Diagnostic log
         showView('auth-view');
     }
 
@@ -168,7 +246,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }, 300);
         } else {
-            alert('删除失败。');
+            handleApiError('删除纪传失败，请重试。', () => handleDeleteSession(sessionId, elementToRemove));
         }
     }
 
@@ -277,11 +355,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 loadSessionAndStartGame(data.session_id);
             } else {
                 const errorData = response ? await response.json().catch(() => ({})) : { error: '未知错误' };
-                alert(`世界创造失败: ${errorData.details || errorData.error || '请检查输入或后台日志。'}`);
+                handleApiError(`世界创造失败: ${errorData.details || errorData.error || '请检查输入或后台日志。'}`, () => handleCreateWorld(e));
             }
         } catch (error) {
             console.error('World creation failed:', error);
-            alert('创造世界时发生网络错误，请重试。');
+            handleApiError('创造世界时发生网络错误，请重试。', () => handleCreateWorld(e));
         } finally {
             hideWorldFormSkeleton();
             submitBtn.disabled = false;
@@ -320,18 +398,20 @@ document.addEventListener('DOMContentLoaded', function() {
                     alert(`AI辅助失败: ${assistedData.error}`);
                     return;
                 }
+
                 document.getElementById('world-name').value = assistedData.world_name || '';
+
                 document.getElementById('character-description').value = assistedData.character_description || '';
                 document.getElementById('world-rules').value = assistedData.world_rules || '';
                 document.getElementById('initial-scene').value = assistedData.initial_scene || '';
                 document.getElementById('narrative-principles').value = assistedData.narrative_principles || '';
             } else {
                 const errorData = response ? await response.json().catch(() => ({ error: '无法解析错误响应' })) : { error: '未知网络错误' };
-                alert(`AI辅助失败: ${errorData.error || '请稍后再试。'}`);
+                handleApiError(`AI辅助失败: ${errorData.error || '请稍后再试。'}`, handleAssistCreateWorld);
             }
         } catch (error) {
             console.error('AI辅助请求时发生网络错误:', error);
-            alert('AI辅助请求失败，请检查网络连接或稍后再试。');
+            handleApiError('AI辅助请求失败，请检查网络连接或稍后再试。', handleAssistCreateWorld);
         } finally {
             assistCreateWorldBtn.disabled = false;
             assistCreateWorldBtn.textContent = 'AI辅助咏唱';
@@ -351,7 +431,7 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log("从后端收到的完整存档数据:", JSON.stringify(sessionData, null, 2));
             startGame(sessionData); // 将存档数据和操作意图一起传递
         } else {
-            alert('加载纪事失败。');
+            handleApiError('加载纪事失败，请重试。', () => loadSessionAndStartGame(sessionId));
             console.error("无法加载会话:", response);
         }
     }
@@ -365,7 +445,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // 如果缺少，说明存档可能已损坏或后端未正确返回数据，这是导致问题的主要原因。
         if (!currentState) {
             console.error("存档数据无效或已损坏：缺少 'current_state'。无法继续游戏。", sessionData);
-            alert("加载存档失败：存档数据似乎已损坏或不完整，无法从上次的进度继续。请检查后端服务是否正确返回了会话状态。");
+            handleApiError("加载存档失败：存档数据似乎已损坏或不完整，无法从上次的进度继续。");
             return; // 终止函数执行，防止游戏“重新开始”
         }
 
@@ -423,6 +503,9 @@ document.addEventListener('DOMContentLoaded', function() {
         // --- UI Loading State ---
         let requestSucceeded = false;
         retryAiBtn.style.display = 'none';
+        const originalRetryBtnText = retryAiBtn.textContent; // Store original text
+        retryAiBtn.disabled = true; // Disable the button
+        retryAiBtn.textContent = '重试中...'; // Change the text
         actionInput.disabled = true;
         gameSuggestions.querySelectorAll('button').forEach(btn => btn.disabled = true);
 
@@ -459,6 +542,8 @@ document.addEventListener('DOMContentLoaded', function() {
         } finally {
             retryAiBtn.style.display = 'inline-block';
             actionInput.disabled = false;
+            retryAiBtn.disabled = false; // Re-enable the button
+            retryAiBtn.textContent = originalRetryBtnText; // Restore original text
             actionInput.focus();
             if (!requestSucceeded) {
                 gameSuggestions.querySelectorAll('button').forEach(btn => btn.disabled = false);
@@ -647,7 +732,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (response && response.ok) {
                 alert('此纪事的AI配置已成功更新！');
             } else {
-                alert('更新失败。');
+                handleApiError('更新AI配置失败，请重试。', () => handleChangeGameAi(sessionId));
             }
         } else if (chosenId) {
             alert('无效的ID。');
@@ -662,7 +747,7 @@ document.addEventListener('DOMContentLoaded', function() {
             renderAiConfigs();
             showView('ai-config-view');
         } else {
-            alert('获取AI配置失败。');
+            handleApiError('获取AI配置失败，请重试。', showAiConfigView);
         }
     }
 
@@ -754,8 +839,8 @@ document.addEventListener('DOMContentLoaded', function() {
             await showAiConfigView(); // 重新加载并显示配置列表
         } else {
             const errorData = response ? await response.json() : { error: '未知错误' };
-            alert(`保存失败: ${errorData.error}`);
-        }
+            handleApiError(`保存失败: ${errorData.error}`, () => handleAiConfigFormSubmit(e));
+       }
     }
 
 
@@ -766,7 +851,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (response && response.ok) {
             await showAiConfigView();
         } else {
-            alert('删除失败。');
+            handleApiError('删除失败，请重试。', () => handleDeleteAiConfig(configId));
         }
     }
 
@@ -871,8 +956,11 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
+        // 初始化时隐藏全局错误区域
+        globalError.style.display = 'none';
+
         // Initial view check
-        if (state.token) {
+        if (state.accessToken) {
             loadAndShowMainMenu().catch(error => {
                 console.error("Failed to auto-login with stored token:", error);
                 // 如果自动登录失败（例如token过期），则清理并返回登录页
@@ -885,5 +973,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
     init();
+
 
 });

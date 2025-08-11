@@ -1,14 +1,14 @@
 from flask import Blueprint, request, jsonify
 from app import db
 import json
-from app.models import Setting, User, World, GameSession
+from app.models import Setting, User, World, GameSession, TokenBlocklist
 from app.services.ai_service import (
                                       assist_world_creation_text,
                                       generate_setting_pack)
 from app.services.framework_validator import validate_setting_pack
 from app.services.game_turn_service import GameTurnProcessor
 from sqlalchemy.orm.attributes import flag_modified
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity, get_jwt
 
 api_bp = Blueprint('api', __name__)
 
@@ -42,15 +42,29 @@ def login():
     if user is None or not user.check_password(data['password']):
         return jsonify({'error': '用户名或密码无效'}), 401
 
+    # 核心修改：同时创建访问令牌和刷新令牌
     access_token = create_access_token(identity=str(user.id))
-    return jsonify({"access_token": access_token})
+    refresh_token = create_refresh_token(identity=str(user.id))
+    return jsonify(access_token=access_token, refresh_token=refresh_token)
+
+@api_bp.route('/refresh', methods=['POST'])
+@jwt_required(refresh=True)
+def refresh():
+    """
+    刷新访问令牌。这个接口需要一个有效的刷新令牌。
+    """
+    current_user_id = get_jwt_identity()
+    new_access_token = create_access_token(identity=current_user_id)
+    return jsonify(access_token=new_access_token)
 
 @api_bp.route('/logout', methods=['POST'])
+@jwt_required(refresh=True) # 核心修改：登出需要提供刷新令牌
 def logout():
-    """用户登出"""
-    # 对于JWT，登出通常由客户端通过删除令牌来处理。
-    # 更健壮的实现可以增加一个服务器端的令牌黑名单。
-    return jsonify({'message': '登出成功'})
+    """用户登出，将刷新令牌加入黑名单"""
+    jti = get_jwt()["jti"]
+    db.session.add(TokenBlocklist(jti=jti))
+    db.session.commit()
+    return jsonify(message="成功登出")
 
 # --- 游戏创建 ---
 
