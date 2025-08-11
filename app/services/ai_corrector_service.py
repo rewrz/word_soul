@@ -175,20 +175,6 @@ class AICorrectorService:
 
         return errors
 
-
-def use_rule_engine_for_validation(game_session, ai_response):
-    """
-    【进阶思路】使用规则引擎进行校验。
-    这比手写if-else更灵活、更易于扩展。
-    你可以使用像 `pyknow` 或 `durable_rules` 这样的库。
-
-    1. 定义规则 (e.g., IF world is 'Cyberpunk' AND narrative contains 'Magic' -> THEN raise InconsistencyError).
-    2. 将 game_session 和 ai_response 作为"事实"(Facts) 输入引擎。
-    3. 运行引擎，收集所有触发的错误。
-    """
-    pass # 此处为伪代码，具体实现取决于所选的规则引擎库。
-
-
     def _auto_fix_errors(self, ai_response: Dict[str, Any], errors: List[str]) -> Dict[str, Any]:
         """
         自动修复简单错误。
@@ -330,3 +316,15 @@ def use_rule_engine_for_validation(game_session, ai_response):
             import traceback
             traceback.print_exc()
             return None
+
+    def use_rule_engine_for_validation(game_session, ai_response):
+        """
+        【进阶思路】使用规则引擎进行校验。
+        这比手写if-else更灵活、更易于扩展。
+        你可以使用像 `pyknow` 或 `durable_rules` 这样的库。
+
+        1. 定义规则 (e.g., IF world is 'Cyberpunk' AND narrative contains 'Magic' -> THEN raise InconsistencyError).
+        2. 将 game_session 和 ai_response 作为"事实"(Facts) 输入引擎。
+        3. 运行引擎，收集所有触发的错误。
+        """
+        pass # 此处为伪代码，具体实现取决于所选的规则引擎库。
