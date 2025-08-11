@@ -190,11 +190,16 @@ def validate_tasks(tasks):
             errors.append("Each task must be a dictionary.")
             continue
 
-        required_keys = ["状态", "目标", "奖励"]  # 例如："状态"、"目标"、"奖励"
+        required_keys = ["名称", "状态", "目标", "奖励"]  # 例如："名称"、"状态"、"目标"、"奖励"
         for key in required_keys:
             if key not in task:
                 task_identifier = task.get('名称', task.get('目标', 'Unknown'))
                 errors.append(f"Task '{task_identifier}' missing required key: {key}")
+
+        task_name = task.get("名称")
+        if not isinstance(task_name, str) or not task_name.strip():
+            task_identifier = task.get('目标', 'Unknown')
+            errors.append(f"Task '{task_identifier}' '名称' must be a non-empty string.")
 
     return errors
 

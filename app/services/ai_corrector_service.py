@@ -120,8 +120,14 @@ class AICorrectorService:
         errors = []
 
         # 预处理，创建小写集合以便高效、不区分大小写地查找
-        defined_items_lower = {item.get("名称", "").lower() for item in self.setting_pack.get("items", [])}
-        defined_tasks_lower = {task.get("名称", "").lower() for task in self.setting_pack.get("tasks", [])}
+        defined_items_lower = {
+            name.lower() for item in self.setting_pack.get("items", [])
+            if (name := item.get("名称")) and isinstance(name, str)
+        }
+        defined_tasks_lower = {
+            name.lower() for task in self.setting_pack.get("tasks", [])
+            if (name := task.get("名称")) and isinstance(name, str)
+        }
         inventory_items_lower = {item.lower() for item in self.current_state.get('inventory', [])}
 
         # 校验: AI是否试图添加一个不存在于设定集中的物品？
