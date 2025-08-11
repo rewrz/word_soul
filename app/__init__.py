@@ -13,8 +13,8 @@ def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
 
-    # 核心修改：为访问令牌（access token）设置一个较短的过期时间，例如15分钟
-    app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(minutes=15)
+    # 核心修改：为访问令牌（access token）设置一个较短的过期时间，例如1天
+    app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=1)
     # 核心新增：为刷新令牌（refresh token）设置一个较长的过期时间，例如30天
     app.config["JWT_REFRESH_TOKEN_EXPIRES"] = timedelta(days=30)
 
