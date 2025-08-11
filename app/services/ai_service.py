@@ -648,24 +648,23 @@ def _generate_narrative_description(context, active_config):
 - **职责分离**: 你只负责叙事，**不要**进行数值计算或思考游戏规则。
 
 # 世界设定
-- **基调**: {context['narrative_principles']}
-- **描述**: {context['world_description']}
+- **故事基调**: {context['narrative_principles']}
+- **世界设定**: {context['world_description']}
+- **关键角色设定**: {context['player_character_description']}
 
 # 当前状态
-- **玩家**: {context['player_character_description']}
 - **位置**: {context['current_location']}
 - **场景中的NPC**: {context['scene_npcs_str']}
-- **玩家属性**: \n{context['attributes_str']}
+- **玩家当前属性**: \n{context['attributes_str']}
 - **持有物品**: {context['inventory']}
 
 # 玩家的当前行动
 玩家: {context['player_action']}
 
 # 你的任务
-作为故事的叙述者，请详略得当地描述玩家行动后的故事情节，例如事件发展变化、新的场景、NPC的反应等。
-这是故事的主体，请发挥你的想象力。如果玩家的行动不明确或富有创意，请裁定并描述其最可能产生的后果。
+作为故事的叙述者，请简短叙述玩家行动后的故事情节，例如事件发展变化、新的场景、NPC的反应等。
 如果玩家的行动触发了关键剧情（例如与重要NPC交谈、给予关键物品），请重点描述。
-如果场景陷入沉闷，请主动引入新事件（例如：NPC出现、敌人攻击、有新发现等）来推进故事。
+如果场景陷入沉闷，请主动引入新事件（例如：NPC出现、触发新事件、有新发现等）来推进故事。
 
 **你的输出只能是纯文本的故事情节和描述，就像在写网络小说一样，请勿输出任何其他内容。**
 """
