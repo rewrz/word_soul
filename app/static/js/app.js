@@ -506,8 +506,13 @@ document.addEventListener('DOMContentLoaded', function() {
             // 如果历史记录不为空，说明是正在进行的游戏，恢复所有状态
             console.log("检测到有效的游戏历史，正在恢复游戏进度...");
             // 历史记录是倒序存的（最新在前），所以渲染时要反转回来
-            [...currentState.recent_history].reverse().forEach(entry => {
-                appendLog(entry.content, entry.role);
+            // 同时为AI生成的内容提供历史记录索引，以便编辑时同步到后端
+            const reversedHistory = [...currentState.recent_history].reverse();
+            reversedHistory.forEach((entry, displayIndex) => {
+                // 计算在原始历史记录中的索引（因为显示时是反转的）
+                const originalIndex = currentState.recent_history.length - 1 - displayIndex;
+                const historyIndex = entry.role === 'assistant' ? originalIndex : null;
+                appendLog(entry.content, entry.role, historyIndex);
             });
 
             // 如果是加载的旧游戏，恢复上次的建议选项
@@ -609,7 +614,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function renderGameTurn(data) {
         if (data.description) {
-            appendLog(data.description, 'ai');
+            // 新生成的AI剧情总是添加到历史记录的开头（索引0）
+            appendLog(data.description, 'ai', 0);
         }
         if (data.player_message) {
             appendLog(data.player_message, 'message');
@@ -655,12 +661,134 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
 
-    function appendLog(text, type) {
+    function appendLog(text, type, historyIndex = null) {
         const entry = document.createElement('div');
         entry.className = `log-entry ${type}`;
-        entry.textContent = text;
+        
+        // 为AI生成的剧情添加编辑功能
+        if (type === 'ai') {
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'narrative-content';
+            contentDiv.textContent = text;
+            
+            const editBtn = document.createElement('button');
+            editBtn.className = 'edit-narrative-btn';
+            editBtn.textContent = '编辑剧情';
+            editBtn.onclick = () => editNarrative(entry, contentDiv, text, historyIndex);
+            
+            entry.appendChild(contentDiv);
+            entry.appendChild(editBtn);
+        } else {
+            entry.textContent = text;
+        }
+        
         gameLog.appendChild(entry);
         gameLog.scrollTop = gameLog.scrollHeight; // Auto-scroll to bottom
+    }
+
+    // 剧情编辑功能
+    function editNarrative(entryElement, contentDiv, originalText, historyIndex) {
+        // 创建编辑界面
+        const editContainer = document.createElement('div');
+        editContainer.className = 'narrative-edit-container';
+        
+        const textarea = document.createElement('textarea');
+        textarea.className = 'narrative-edit-textarea';
+        textarea.value = originalText;
+        textarea.rows = Math.max(3, originalText.split('\n').length + 1);
+        
+        const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'narrative-edit-buttons';
+        
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'save-narrative-btn';
+        saveBtn.textContent = '保存修改';
+        saveBtn.onclick = () => saveNarrativeEdit(entryElement, contentDiv, textarea.value, originalText, historyIndex);
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'cancel-narrative-btn';
+        cancelBtn.textContent = '取消';
+        cancelBtn.onclick = () => cancelNarrativeEdit(entryElement, contentDiv, originalText, historyIndex);
+        
+        buttonContainer.appendChild(saveBtn);
+        buttonContainer.appendChild(cancelBtn);
+        editContainer.appendChild(textarea);
+        editContainer.appendChild(buttonContainer);
+        
+        // 替换内容为编辑界面
+        entryElement.innerHTML = '';
+        entryElement.appendChild(editContainer);
+        
+        // 聚焦到文本框
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    }
+    
+    async function saveNarrativeEdit(entryElement, contentDiv, newText, originalText, historyIndex) {
+        if (newText.trim() === '') {
+            alert('剧情内容不能为空');
+            return;
+        }
+        
+        // 如果有历史记录索引，则同步到后端
+        if (historyIndex !== null && historyIndex !== undefined) {
+            try {
+                const response = await fetchWithAuth(`/sessions/${state.currentSessionId}/update_narrative`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        narrative: newText,
+                        history_index: historyIndex
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    alert(`更新失败: ${errorData.error || '未知错误'}`);
+                    return;
+                }
+                
+                console.log('剧情已同步到后端历史记录');
+            } catch (error) {
+                console.error('同步剧情到后端失败:', error);
+                alert('同步到服务器失败，修改仅在本地生效');
+            }
+        }
+        
+        // 恢复显示界面，使用新文本
+        contentDiv.textContent = newText;
+        
+        const editBtn = document.createElement('button');
+        editBtn.className = 'edit-narrative-btn';
+        editBtn.textContent = '编辑剧情';
+        editBtn.onclick = () => editNarrative(entryElement, contentDiv, newText, historyIndex);
+        
+        entryElement.innerHTML = '';
+        entryElement.appendChild(contentDiv);
+        entryElement.appendChild(editBtn);
+        
+        // 如果内容有变化，添加修改标记
+        if (newText !== originalText) {
+            entryElement.classList.add('narrative-edited');
+            const editedMark = document.createElement('span');
+            editedMark.className = 'narrative-edited-mark';
+            editedMark.textContent = '(已修改)';
+            entryElement.appendChild(editedMark);
+        }
+    }
+    
+    function cancelNarrativeEdit(entryElement, contentDiv, originalText, historyIndex) {
+        // 恢复原始显示
+        const editBtn = document.createElement('button');
+        editBtn.className = 'edit-narrative-btn';
+        editBtn.textContent = '编辑剧情';
+        editBtn.onclick = () => editNarrative(entryElement, contentDiv, originalText, historyIndex);
+        
+        entryElement.innerHTML = '';
+        entryElement.appendChild(contentDiv);
+        entryElement.appendChild(editBtn);
     }
 
 

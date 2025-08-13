@@ -666,14 +666,20 @@ def _prepare_common_context(setting_pack, current_state, player_action, action_w
 
     # 核心修复：准备结构化的历史记录，并将其倒序以符合API的时间顺序要求。
     # 同时，将内部使用的 'player' 角色映射为AI API可接受的 'user' 角色。
+    # 重要：对于玩家行动，优先使用display_text而不是原始的action_command
     raw_history = current_state.get('recent_history', [])
     
     # API需要按时间顺序排列的历史记录 (旧->新)，所以我们先反转。
     # 同时使用列表推导式来映射角色，确保发送给API的角色是 'user' 或 'assistant'。
-    api_history = [
-        {'role': 'user' if entry.get('role') == 'player' else entry.get('role'), 'content': entry.get('content')}
-        for entry in reversed(raw_history)
-    ]
+    api_history = []
+    for entry in reversed(raw_history):
+        if entry.get('role') == 'player':
+            # 对于玩家行动，优先使用display_text（如果存在），这样AI能更好地理解玩家的意图
+            content = entry.get('display_text', entry.get('content'))
+            api_history.append({'role': 'user', 'content': content})
+        else:
+            api_history.append({'role': entry.get('role'), 'content': entry.get('content')})
+    
     context['history_for_api'] = api_history
 
     # 构建特定行动的上下文

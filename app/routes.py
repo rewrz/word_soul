@@ -310,6 +310,61 @@ def delete_session(session_id):
 
     return jsonify({'message': '会话删除成功'}), 200
 
+@api_bp.route('/sessions/<int:session_id>/update_narrative', methods=['POST'])
+@jwt_required()
+def update_narrative(session_id):
+    """更新游戏会话中的剧情内容"""
+    current_user_id = int(get_jwt_identity())
+    data = request.get_json()
+    
+    new_narrative = data.get('narrative')
+    history_index = data.get('history_index')  # 在历史记录中的索引位置
+    
+    if not new_narrative:
+        return jsonify({"error": "必须提供新的剧情内容"}), 400
+    
+    if history_index is None:
+        return jsonify({"error": "必须提供历史记录索引"}), 400
+    
+    # 获取会话并验证所有权
+    session = GameSession.query.filter_by(id=session_id, user_id=current_user_id).first_or_404(
+        description="游戏会话未找到或无权访问"
+    )
+    
+    try:
+        # 获取当前历史记录
+        recent_history = session.current_state.get('recent_history', [])
+        
+        # 验证索引有效性
+        if history_index < 0 or history_index >= len(recent_history):
+            return jsonify({"error": "无效的历史记录索引"}), 400
+        
+        # 确保只能修改AI生成的内容（role为assistant）
+        if recent_history[history_index].get('role') != 'assistant':
+            return jsonify({"error": "只能修改AI生成的剧情内容"}), 400
+        
+        # 净化文本内容
+        def sanitize_text(text):
+            return text.replace("<", "&lt;").replace(">", "&gt;")
+        
+        sanitized_narrative = sanitize_text(new_narrative)
+        
+        # 更新历史记录
+        recent_history[history_index]['content'] = sanitized_narrative
+        
+        # 标记状态已被修改
+        flag_modified(session, "current_state")
+        db.session.commit()
+        
+        return jsonify({
+            'message': '剧情更新成功',
+            'updated_content': sanitized_narrative
+        }), 200
+        
+    except Exception as e:
+        print(f"更新剧情时出错: {e}")
+        return jsonify({'error': '更新剧情失败'}), 500
+
 # --- 用户AI配置管理 ---
 
 @api_bp.route('/ai-configs', methods=['GET'])

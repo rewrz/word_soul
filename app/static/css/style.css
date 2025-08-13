@@ -134,6 +134,114 @@ input[type="password"] {
     background: var(--text-muted-color);
 }
 
+/* --- 剧情编辑功能样式 --- */
+.edit-narrative-btn {
+    background-color: rgba(130, 170, 255, 0.1);
+    border: 1px solid var(--primary-color);
+    color: var(--primary-color);
+    padding: 4px 8px;
+    margin-left: 10px;
+    margin-top: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8em;
+    transition: all 0.2s;
+    float: right;
+}
+
+.edit-narrative-btn:hover {
+    background-color: var(--primary-color);
+    color: var(--bg-color);
+}
+
+.narrative-content {
+    margin-bottom: 5px;
+}
+
+.narrative-edit-container {
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
+    margin: 5px 0;
+}
+
+.narrative-edit-textarea {
+    width: 100%;
+    min-height: 80px;
+    background-color: var(--input-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-color);
+    padding: 10px;
+    font-family: var(--font-serif);
+    font-size: 1em;
+    line-height: 1.5;
+    resize: vertical;
+    box-sizing: border-box;
+}
+
+.narrative-edit-textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(130, 170, 255, 0.2);
+}
+
+.narrative-edit-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+    justify-content: flex-end;
+}
+
+.save-narrative-btn {
+    background-color: var(--primary-color);
+    border: none;
+    color: var(--bg-color);
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background-color 0.2s;
+}
+
+.save-narrative-btn:hover {
+    background-color: #9bb3ff;
+}
+
+.cancel-narrative-btn {
+    background-color: transparent;
+    border: 1px solid var(--text-muted-color);
+    color: var(--text-muted-color);
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: all 0.2s;
+}
+
+.cancel-narrative-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-color: var(--text-color);
+    color: var(--text-color);
+}
+
+.narrative-edited {
+    background-color: rgba(255, 193, 7, 0.1);
+    border-left: 3px solid #ffc107;
+    padding-left: 10px;
+    border-radius: 0 4px 4px 0;
+}
+
+.narrative-edited-mark {
+    color: #ffc107;
+    font-size: 0.8em;
+    font-style: italic;
+    margin-left: 10px;
+    float: right;
+    margin-top: 5px;
+}
+
 /* 现有的CSS样式可以继续放在这里 */
 
 

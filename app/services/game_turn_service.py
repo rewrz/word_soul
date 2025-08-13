@@ -319,7 +319,20 @@ class GameTurnProcessor:
 
         sanitized_action = sanitize_text(player_action)
         sanitized_description = sanitize_text(ai_response_data.get('description', ''))
-        self.current_state['recent_history'].insert(0, {"role": "player", "content": sanitized_action})
+        
+        # 检查是否是通过建议按钮触发的行动（包含display_text）
+        player_entry = {"role": "player", "content": sanitized_action}
+        
+        # 如果玩家行动来自建议选择，尝试找到对应的display_text
+        if 'suggested_choices' in self.current_state.get('last_ai_response', {}):
+            for choice in self.current_state['last_ai_response']['suggested_choices']:
+                if (isinstance(choice, dict) and 
+                    choice.get('action_command') == player_action and 
+                    choice.get('display_text')):
+                    player_entry['display_text'] = sanitize_text(choice['display_text'])
+                    break
+        
+        self.current_state['recent_history'].insert(0, player_entry)
         self.current_state['recent_history'].insert(0, {"role": "assistant", "content": sanitized_description})
         self.current_state['recent_history'] = self.current_state['recent_history'][:10]
         self.current_state['last_ai_response'] = ai_response_data
