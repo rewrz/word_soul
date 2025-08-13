@@ -87,7 +87,11 @@ class AICorrectorService:
         return errors
 
     def _validate_suggestions_consistency(self, suggestions: List[Dict]) -> List[str]:
-        """校验AI的行动建议是否合理、可行。"""
+        """校验AI的行动建议是否合理、可行。
+        
+        注意：为了支持动态游戏世界，我们允许AI建议使用新的技能和物品，
+        但仍然对明显不合理的建议进行校验。
+        """
         errors = []
         if not isinstance(suggestions, list):
             return [] # 如果格式不对，直接返回，避免后续错误
@@ -101,11 +105,15 @@ class AICorrectorService:
             if not command:
                 continue
 
-            # 示例1: 建议使用的技能是否存在？
+            # 【修改】对于技能和物品使用，采用更宽松的校验策略
             skill_match = re.search(r"使用\s+(.+)", command)
             if skill_match:
                 entity_name = skill_match.group(1).strip()
-                if entity_name.lower() not in available_skills_lower and entity_name.lower() not in inventory_items_lower:
+                # 只有当明确不在技能列表且不在物品栏时才报错
+                # 但允许AI建议使用可能在游戏过程中获得的新技能或物品
+                if (entity_name.lower() not in available_skills_lower and 
+                    entity_name.lower() not in inventory_items_lower and
+                    not self._is_plausible_dynamic_ability(entity_name)):
                     errors.append(f"AI建议了不存在的技能或物品: '{entity_name}'")
 
             # 示例2: 建议交谈的NPC是否在场景中？
@@ -121,9 +129,36 @@ class AICorrectorService:
                     errors.append(f"AI建议与不在场的NPC '{npc_name}' 交谈。")
 
         return errors
+    
+    def _is_plausible_dynamic_ability(self, ability_name: str) -> bool:
+        """判断一个技能或物品名称是否是合理的动态能力。
+        
+        这个方法用于判断AI建议的技能或物品是否可能是在游戏过程中
+        动态获得的，而不是明显的错误。
+        """
+        ability_lower = ability_name.lower()
+        
+        # 一些常见的动态技能/物品模式
+        dynamic_patterns = [
+            '影刃', '暗影', '光环', '护体', '位移',  # 常见的技能词汇
+            '护符', '药水', '卷轴', '宝石', '符文',  # 常见的物品词汇
+            '剑', '盾', '法杖', '弓', '匕首',        # 武器类
+            '药', '丹', '符', '珠', '石'            # 消耗品类
+        ]
+        
+        # 如果包含这些模式中的任何一个，认为是合理的动态能力
+        for pattern in dynamic_patterns:
+            if pattern in ability_lower:
+                return True
+                
+        return False
 
     def _validate_state_changes(self, ai_response: Dict[str, Any]) -> List[str]:
-        """校验AI建议的状态变更是否符合规则。"""
+        """校验AI建议的状态变更是否符合规则。
+        
+        注意：为了支持动态游戏世界，我们允许AI创建新的物品和技能，
+        但仍然对明显的逻辑错误进行校验。
+        """
         errors = []
 
         # 预处理，创建小写集合以便高效、不区分大小写地查找
@@ -137,41 +172,47 @@ class AICorrectorService:
         }
         inventory_items_lower = {item.lower() for item in self.current_state.get('inventory', [])}
 
-        # 校验: AI是否试图添加一个不存在于设定集中的物品？
+        # 【修改】允许AI添加新物品 - 这是游戏过程中获得物品的正常逻辑
+        # 不再校验物品是否在预定义列表中，因为游戏中可以动态获得新物品
         item_to_add = ai_response.get('add_item_to_inventory')
-        if item_to_add and item_to_add.lower() not in defined_items_lower:
-            errors.append(f"AI试图添加一个未在世界设定中定义的物品: '{item_to_add}'")
+        if item_to_add:
+            # 只检查基本的数据类型，不检查是否预定义
+            if not isinstance(item_to_add, str) or not item_to_add.strip():
+                errors.append(f"AI试图添加无效的物品: '{item_to_add}'")
 
-        # 校验: AI是否试图移除一个不存在于设定集中或玩家没有的物品？
+        # 【修改】对于移除物品，只检查玩家是否真的拥有该物品
         item_to_remove = ai_response.get('remove_item_from_inventory')
         if item_to_remove:
-            if item_to_remove.lower() not in defined_items_lower:
-                errors.append(f"AI试图移除一个未在世界设定中定义的物品: '{item_to_remove}'")
-            elif item_to_remove.lower() not in inventory_items_lower:
-                # 这是一个逻辑一致性错误，而不是定义错误
+            if item_to_remove.lower() not in inventory_items_lower:
+                # 这是一个逻辑一致性错误 - 不能移除没有的物品
                 errors.append(f"AI试图移除玩家并不拥有的物品: '{item_to_remove}'")
 
-        # 校验: AI是否试图更新一个不存在的任务？
+        # 【修改】对于任务更新，允许更新动态创建的任务
         quest_update_str = ai_response.get("update_quest_status")
         if quest_update_str and isinstance(quest_update_str, str):
             parts = quest_update_str.split(":", 1)
             if len(parts) == 2:
                 quest_name = parts[0].strip()
-                # 修复：确保quest_name不为None再调用lower方法
-                if quest_name and quest_name.lower() not in defined_tasks_lower:
-                    errors.append(f"AI试图更新一个不存在的任务: '{quest_name}'")
-                elif not quest_name:
+                if not quest_name:
                     errors.append("AI试图更新任务，但任务名为空")
+                # 不再检查任务是否预定义，允许更新动态创建的任务
 
-        # 校验: AI是否试图创建一个已经存在的任务？
+        # 【修改】允许创建新任务，不检查是否已存在（可能是任务的不同阶段）
         new_quest_data = ai_response.get("create_new_quest")
         if isinstance(new_quest_data, dict) and '名称' in new_quest_data:
             quest_name = new_quest_data['名称']
-            # 修复：确保quest_name不为None再调用lower方法
-            if quest_name and quest_name.lower() in defined_tasks_lower:
-                errors.append(f"AI试图创建一个已经存在的任务: '{quest_name}'")
-            elif not quest_name:
+            if not quest_name:
                 errors.append("AI试图创建任务，但任务名为空")
+            # 移除重复任务检查，允许任务的演化和分支
+
+        # 【修改】对于属性更新，允许动态属性，但保持数值类型检查
+        attribute_updates = ai_response.get("update_attributes")
+        if isinstance(attribute_updates, dict):
+            for attr_name, change_value in attribute_updates.items():
+                # 只检查变化值是否为数字，不检查属性是否预定义
+                if not isinstance(change_value, (int, float)):
+                    errors.append(f"AI试图将属性'{attr_name}'的变化值设为非数字: '{change_value}'")
+                # 允许动态属性的创建和更新
 
         return errors
 
@@ -194,43 +235,53 @@ class AICorrectorService:
                     fixed_response['remove_item_from_inventory'] = None
                     print(f"[自动修复] 已移除对不存在物品的移除请求: {item_match.group(1)}")
             
-            # 修复：添加未定义的物品
-            elif "AI试图添加一个未在世界设定中定义的物品" in error:
-                item_match = re.search(r"AI试图添加一个未在世界设定中定义的物品: '(.+?)'$", error)
-                if item_match and 'add_item_to_inventory' in fixed_response:
-                    # 清除该物品的添加请求
-                    fixed_response['add_item_to_inventory'] = None
-                    print(f"[自动修复] 已移除对未定义物品的添加请求: {item_match.group(1)}")
+            # 【移除】不再阻止添加未定义的物品，因为支持动态物品系统
+            # elif "AI试图添加一个未在世界设定中定义的物品" in error:
+            #     # 允许动态物品，不再自动修复此类"错误"
             
-            # 修复：更新不存在的任务
-            elif "AI试图更新一个不存在的任务" in error:
-                quest_match = re.search(r"AI试图更新一个不存在的任务: '(.+?)'$", error)
-                if quest_match and 'update_quest_status' in fixed_response:
-                    # 清除该任务的更新请求
-                    fixed_response['update_quest_status'] = None
-                    print(f"[自动修复] 已移除对不存在任务的更新请求: {quest_match.group(1)}")
+            # 【移除】不再阻止更新动态任务，因为支持任务系统的动态演化
+            # elif "AI试图更新一个不存在的任务" in error:
+            #     # 允许动态任务更新，不再自动修复此类"错误"
             
-            # 修复：创建已存在的任务
-            elif "AI试图创建一个已经存在的任务" in error:
-                quest_match = re.search(r"AI试图创建一个已经存在的任务: '(.+?)'$", error)
-                if quest_match and 'create_new_quest' in fixed_response:
-                    # 清除该任务的创建请求
-                    fixed_response['create_new_quest'] = None
-                    print(f"[自动修复] 已移除对已存在任务的创建请求: {quest_match.group(1)}")
+            # 【移除】不再阻止创建重复任务，因为任务可能有多个阶段或分支
+            # elif "AI试图创建一个已经存在的任务" in error:
+            #     # 允许任务的演化和分支，不再自动修复此类"错误"
             
-            # 修复：建议使用不存在的技能或物品
+            # 【修改】对于技能和物品建议，采用更智能的修复策略
             elif "AI建议了不存在的技能或物品" in error:
                 # 这种情况比较复杂，需要修改suggested_choices列表
                 if 'suggested_choices' in fixed_response and isinstance(fixed_response['suggested_choices'], list):
                     entity_match = re.search(r"AI建议了不存在的技能或物品: '(.+?)'$", error)
                     if entity_match:
                         entity_name = entity_match.group(1)
-                        # 过滤掉包含不存在技能或物品的建议
-                        fixed_response['suggested_choices'] = [
-                            choice for choice in fixed_response['suggested_choices']
-                            if not (f"使用 {entity_name}" in choice.get('action_command', ''))
-                        ]
-                        print(f"[自动修复] 已移除包含不存在技能或物品的建议: {entity_name}")
+                        # 只有当技能/物品名称明显不合理时才移除建议
+                        if not self._is_plausible_dynamic_ability(entity_name):
+                            # 过滤掉包含明显错误技能或物品的建议
+                            original_count = len(fixed_response['suggested_choices'])
+                            fixed_response['suggested_choices'] = [
+                                choice for choice in fixed_response['suggested_choices']
+                                if not (f"使用 {entity_name}" in choice.get('action_command', '') or
+                                       entity_name in choice.get('action_command', ''))
+                            ]
+                            if len(fixed_response['suggested_choices']) < original_count:
+                                print(f"[自动修复] 已移除包含不合理技能或物品的建议: {entity_name}")
+            
+            # 【移除】不再阻止更新未定义的属性，因为支持动态属性系统
+            # elif "AI试图更新一个未在世界设定中定义的属性" in error:
+            #     # 允许动态属性的创建和更新，不再自动修复此类"错误"
+            
+            # 修复：属性变化值为非数字
+            elif "AI试图将属性" in error and "的变化值设为非数字" in error:
+                attr_match = re.search(r"AI试图将属性'(.+?)'的变化值设为非数字: '(.+?)'$", error)
+                if attr_match and 'update_attributes' in fixed_response:
+                    attr_name = attr_match.group(1)
+                    if isinstance(fixed_response['update_attributes'], dict):
+                        # 移除非数字的属性更新
+                        fixed_response['update_attributes'].pop(attr_name, None)
+                        # 如果字典为空，则移除整个update_attributes字段
+                        if not fixed_response['update_attributes']:
+                            fixed_response['update_attributes'] = None
+                        print(f"[自动修复] 已移除非数字属性变化值: {attr_name}")
             
             # 修复：建议与不在场的NPC交谈
             elif "AI建议与不在场的NPC" in error:

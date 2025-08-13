@@ -48,6 +48,92 @@ input[type="password"] {
     background-color: #00A330; /* 稍微暗一点的绿色 */
 }
 
+/* 任务系统样式 */
+.quest-section {
+    font-weight: bold;
+    color: var(--primary-color);
+    margin: 8px 0 4px 0;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.quest-item {
+    color: var(--text-color);
+    margin: 2px 0;
+    padding: 2px 8px;
+    font-size: 0.95em;
+    line-height: 1.4;
+}
+
+.quest-completed {
+    color: #28a745 !important;
+    font-size: 0.9em;
+    margin: 2px 0;
+    padding: 2px 8px;
+    opacity: 0.8;
+}
+
+.quest-failed {
+    color: #dc3545 !important;
+    font-size: 0.9em;
+    margin: 2px 0;
+    padding: 2px 8px;
+    opacity: 0.8;
+    text-decoration: line-through;
+}
+
+.quest-more {
+    color: var(--text-muted-color);
+    font-size: 0.85em;
+    margin: 4px 0;
+    padding: 2px 8px;
+    font-style: italic;
+}
+
+.quest-toggle {
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.quest-toggle:hover {
+    color: var(--primary-color);
+    text-decoration: underline;
+}
+
+.quest-expanded {
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* 任务列表容器优化 */
+#quest-list {
+    max-height: 300px;
+    overflow-y: auto;
+    padding-right: 5px;
+}
+
+#quest-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+#quest-list::-webkit-scrollbar-track {
+    background: var(--input-bg);
+    border-radius: 2px;
+}
+
+#quest-list::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 2px;
+}
+
+#quest-list::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted-color);
+}
+
 /* 现有的CSS样式可以继续放在这里 */
 
 

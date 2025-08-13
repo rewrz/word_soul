@@ -696,15 +696,61 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
 
-        // 3. 渲染任务列表
+        // 3. 渲染任务列表（聚合显示）
         questList.innerHTML = '';
-        const quests = currentState.active_quests || {};
-        if (Object.keys(quests).length === 0) {
-            questList.innerHTML = '<li>暂无任务</li>';
+        const activeQuests = currentState.active_quests || {};
+        const completedQuests = currentState.completed_quests || [];
+        
+        // 显示活跃任务（最多显示5个）
+        const activeQuestEntries = Object.entries(activeQuests);
+        if (activeQuestEntries.length === 0) {
+            questList.innerHTML = '<li class="quest-section"><strong>当前任务:</strong> 暂无</li>';
         } else {
-            for (const [name, status] of Object.entries(quests)) {
+            const questHeader = document.createElement('li');
+            questHeader.className = 'quest-section';
+            questHeader.innerHTML = `<strong>当前任务 (${activeQuestEntries.length}):</strong>`;
+            questList.appendChild(questHeader);
+            
+            // 显示前5个活跃任务
+            const displayQuests = activeQuestEntries.slice(0, 5);
+            for (const [name, status] of displayQuests) {
                 const li = document.createElement('li');
-                li.innerHTML = `<strong>${name}:</strong> ${status}`;
+                li.className = 'quest-item';
+                li.innerHTML = `• ${name}: ${status}`;
+                questList.appendChild(li);
+            }
+            
+            // 如果有更多任务，显示折叠提示
+            if (activeQuestEntries.length > 5) {
+                const moreQuests = document.createElement('li');
+                moreQuests.className = 'quest-more';
+                moreQuests.innerHTML = `<span class="quest-toggle" onclick="toggleQuestDetails()">... 还有 ${activeQuestEntries.length - 5} 个任务 (点击展开)</span>`;
+                moreQuests.style.cursor = 'pointer';
+                moreQuests.style.color = '#666';
+                questList.appendChild(moreQuests);
+            }
+        }
+        
+        // 显示最近完成的任务（最多3个）
+        if (completedQuests.length > 0) {
+            const completedHeader = document.createElement('li');
+            completedHeader.className = 'quest-section';
+            completedHeader.innerHTML = `<strong>最近完成 (${completedQuests.length}):</strong>`;
+            completedHeader.style.marginTop = '10px';
+            questList.appendChild(completedHeader);
+            
+            const recentCompleted = completedQuests.slice(-3); // 显示最近3个
+            for (const quest of recentCompleted) {
+                const li = document.createElement('li');
+                const isSuccess = quest.is_success !== false; // 默认为成功，除非明确标记为失败
+                li.className = isSuccess ? 'quest-completed' : 'quest-failed';
+                li.innerHTML = `• ${quest.name}: ${quest.status}`;
+                if (isSuccess) {
+                    li.style.color = '#28a745'; // 绿色表示成功
+                } else {
+                    li.style.color = '#dc3545'; // 红色表示失败
+                }
+                li.style.fontSize = '0.9em';
                 questList.appendChild(li);
             }
         }
@@ -724,6 +770,48 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // --- Quest Management Logic ---
+    let questDetailsExpanded = false;
+    
+    // 将函数设为全局，以便HTML onclick可以调用
+    window.toggleQuestDetails = function() {
+        const questList = document.getElementById('quest-list');
+        const activeQuests = state.currentState?.active_quests || {};
+        const activeQuestEntries = Object.entries(activeQuests);
+        
+        if (!questDetailsExpanded && activeQuestEntries.length > 5) {
+            // 展开显示所有任务
+            questDetailsExpanded = true;
+            
+            // 移除"更多任务"提示
+            const moreQuestsElement = questList.querySelector('.quest-more');
+            if (moreQuestsElement) {
+                moreQuestsElement.remove();
+            }
+            
+            // 添加剩余的任务
+            const remainingQuests = activeQuestEntries.slice(5);
+            for (const [name, status] of remainingQuests) {
+                const li = document.createElement('li');
+                li.className = 'quest-item quest-expanded';
+                li.innerHTML = `• ${name}: ${status}`;
+                questList.appendChild(li);
+            }
+            
+            // 添加折叠按钮
+            const collapseBtn = document.createElement('li');
+            collapseBtn.className = 'quest-more';
+            collapseBtn.innerHTML = `<span class="quest-toggle" onclick="toggleQuestDetails()">收起任务列表</span>`;
+            collapseBtn.style.cursor = 'pointer';
+            collapseBtn.style.color = '#666';
+            questList.appendChild(collapseBtn);
+        } else if (questDetailsExpanded) {
+            // 折叠任务列表
+            questDetailsExpanded = false;
+            renderPlayerStatus(state.currentState); // 重新渲染任务列表
+        }
+    }
+    
     // --- AI Config Logic ---
     async function populateAiConfigSelect(selectElement, selectedId) {
         // 这是一个辅助函数，用于使用AI配置填充<select>元素

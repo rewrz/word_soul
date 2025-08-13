@@ -284,27 +284,29 @@ def validate_game_state(current_state, setting_pack):
         if not isinstance(attr_value, (int, float)):
             errors.append(f"属性 '{attr_name}' 的值必须是数字，但收到了 '{attr_value}'。")
 
-    # 2. 校验 'inventory'
+    # 2. 校验 'inventory' - 【修改】支持动态物品系统
     if 'inventory' in current_state:
         if not isinstance(current_state['inventory'], list):
             errors.append("游戏状态中的 'inventory' 必须是一个列表。")
         else:
-            defined_items = [item.get("名称") for item in setting_pack.get("items", [])]
+            # 【修改】不再严格校验物品是否预定义，因为支持动态物品获取
+            # 只检查基本的数据完整性
             for item_name in current_state['inventory']:
-                if item_name not in defined_items:
-                    errors.append(f"玩家物品栏中包含未定义的物品: '{item_name}'。")
+                if not isinstance(item_name, str) or not item_name.strip():
+                    errors.append(f"玩家物品栏中包含无效的物品名称: '{item_name}'。")
 
-    # 3. 校验 'cooldowns'
+    # 【修改】校验 'cooldowns' - 支持动态技能系统
     if 'cooldowns' in current_state:
         if not isinstance(current_state['cooldowns'], dict):
             errors.append("游戏状态中的 'cooldowns' 必须是一个字典。")
         else:
-            defined_skills = [skill.get("名称") for skill in setting_pack.get("skills", [])]
+            # 【修改】不再检查技能是否在预定义列表中，允许动态技能的冷却
             for skill_name, cooldown_value in current_state['cooldowns'].items():
-                if skill_name not in defined_skills:
-                    errors.append(f"技能冷却中包含未定义的技能: '{skill_name}'。")
-                if not isinstance(cooldown_value, int):
-                    errors.append(f"技能 '{skill_name}' 的冷却时间必须是整数。")
+                # 只检查技能名称和冷却时间的基本有效性
+                if not isinstance(skill_name, str) or not skill_name.strip():
+                    errors.append(f"技能冷却中包含无效的技能名称: '{skill_name}'。")
+                if not isinstance(cooldown_value, int) or cooldown_value < 0:
+                    errors.append(f"技能 '{skill_name}' 的冷却时间必须是非负整数。")
 
     # 4. 校验 'active_quests', 'current_location' 等字段的基本类型
     if 'active_quests' in current_state and not isinstance(current_state['active_quests'], dict):

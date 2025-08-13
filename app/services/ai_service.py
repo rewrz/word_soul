@@ -406,8 +406,8 @@ def _generate_attributes(setting_pack, active_config, previous_errors=None):
 
 # 世界观设定参考
 - 故事基调: {setting_pack.get('narrative_principles', '未知')}
-- 世界描述: {setting_pack.get('world_description', '未知')}
-- 玩家角色: {setting_pack.get('player_character_description', '未知')}
+- 世界故事背景描述: {setting_pack.get('world_description', '未知')}
+- 角色背景描述: {setting_pack.get('player_character_description', '未知')}
 
 # 你的任务
 生成一个JSON对象 `attribute_dimensions`。
@@ -415,6 +415,8 @@ def _generate_attributes(setting_pack, active_config, previous_errors=None):
 - 可以有可选的“防御”和“辅助”维度。
 - 在“辅助”维度中，请务必定义一个用于交易的**货币**属性。
 - 每个维度都是一个对象，包含 "name" (string) 和 "initial_value" (number)。
+
+参考示例如下：
 
 ```json
 {{
@@ -698,7 +700,7 @@ def _generate_narrative_description(context, active_config):
 # 世界设定
 - **故事基调**: {context['narrative_principles']}
 - **世界设定或故事主线**: {context['world_description']}
-- **关键角色设定**: {context['player_character_description']}
+- **主要角色设定（包含玩家角色）**: {context['player_character_description']}
 
 # 当前状态
 - **位置**: {context['current_location']}
@@ -737,12 +739,13 @@ def _analyze_narrative_for_state_changes(narrative_text, context, active_config)
 根据以上剧情，分析是否发生了以下事件，并严格按照JSON格式输出。
 如果某个事件没有发生，请让对应的值为 null 或空字符串。
 
-1.  **玩家信息 (PLAYER_MESSAGE)**: 剧情中是否有给玩家的直接提示或状态提醒？（例如“你感到一阵寒意。”）
+1.  **玩家信息 (PLAYER_MESSAGE)**: 剧情中是否有给玩家的直接提示或状态提醒？（例如"你感到一阵寒意。"）
 2.  **获得物品 (ADD_ITEM_TO_INVENTORY)**: 剧情是否明确描述玩家获得了某个物品？
 3.  **失去物品 (REMOVE_ITEM_FROM_INVENTORY)**: 剧情是否明确描述玩家消耗、损坏或失去了某个物品？
 4.  **位置变更 (UPDATE_LOCATION)**: 剧情是否描述玩家移动到了一个新地点？
 5.  **任务更新 (UPDATE_QUEST_STATUS)**: 剧情是否暗示某个任务的状态发生了变化？（格式："任务名: 新状态"）
 6.  **创建新任务 (CREATE_NEW_QUEST)**: 剧情是否自然地引出了一个全新的任务？如果是，请定义任务的名称、目标和奖励。
+7.  **属性变更 (UPDATE_ATTRIBUTES)**: 剧情是否暗示玩家的属性发生了变化？（例如受伤、恢复、获得经验、疲劳等）如果是，请指定属性名和变化值。
 
 # 输出格式
 ```json
@@ -756,6 +759,9 @@ def _analyze_narrative_for_state_changes(narrative_text, context, active_config)
         "名称": "(字符串)",
         "目标": "(字符串)",
         "奖励": "(字符串或对象)"
+    }},
+    "UPDATE_ATTRIBUTES": {{
+        "属性名": "变化值(数字, 正数表示增加, 负数表示减少)"
     }}
 }}
 ```
